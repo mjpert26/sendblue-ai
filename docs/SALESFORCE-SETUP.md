@@ -96,10 +96,10 @@ mirror on Contact where conversations continue post-conversion):
 |-----------------|--------------------|------|---------------|
 | AI Enabled | `AI_Enabled__c` | Checkbox, default TRUE | `ai_enabled` |
 | Human Takeover | `Human_Takeover__c` | Checkbox, default FALSE | `human_takeover` |
-| SMS Consent | `SMS_Consent__c` | Checkbox, default FALSE | `sms_consent` |
-| SMS Consent Source | `SMS_Consent_Source__c` | Text(100) | `consent_source` |
-| SMS Consent Timestamp | `SMS_Consent_Timestamp__c` | Date/Time | `consent_timestamp` |
-| SMS Opt Out | `SMS_Opt_Out__c` | Checkbox, default FALSE | `sms_opt_out` |
+| Sendblue Consent | `Sendblue_Consent__c` | Checkbox, default FALSE | `sms_consent` |
+| Sendblue Consent Source | `Sendblue_Consent_Source__c` | Text(100) | `consent_source` |
+| Sendblue Consent Timestamp | `Sendblue_Consent_Timestamp__c` | Date/Time | `consent_timestamp` |
+| Sendblue Opt Out | `Sendblue_Opt_Out__c` | Checkbox, default FALSE | `sms_opt_out` |
 | Wrong Number | `Wrong_Number__c` | Checkbox, default FALSE | `wrong_number` |
 | AI Conversation Stage | `AI_Conversation_Stage__c` | Picklist | `conversation_stage` |
 | AI Handoff Reason | `AI_Handoff_Reason__c` | Text(255) | `handoff_reason` |

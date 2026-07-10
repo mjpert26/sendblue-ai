@@ -23,7 +23,7 @@
     { "stage": "NOT_MOVING_FORWARD_OPP", "internal_object": "Opportunity", "internal_field": "StageName", "internal_values": ["Declined"], "customer_wording": "Your file isn't moving forward at this time.", "next_step": "A specialist can discuss details or future options with you.", "verification_level": 2, "human_escalation_required": true, "last_compliance_review": null, "active": true },
 
     { "stage": "HUMAN_HANDOFF", "internal_object": "Lead", "internal_field": "Emma_Human_Takeover__c", "internal_values": ["true"], "customer_wording": "A member of our team is handling your conversation.", "next_step": "They'll reply here directly.", "verification_level": 0, "human_escalation_required": false, "last_compliance_review": null, "active": true },
-    { "stage": "DO_NOT_CONTACT", "internal_object": "Lead", "internal_field": "SMS_Opt_Out__c", "internal_values": ["true"], "customer_wording": null, "next_step": null, "verification_level": 0, "human_escalation_required": false, "last_compliance_review": null, "active": true },
+    { "stage": "DO_NOT_CONTACT", "internal_object": "Lead", "internal_field": "Sendblue_Opt_Out__c", "internal_values": ["true"], "customer_wording": null, "next_step": null, "verification_level": 0, "human_escalation_required": false, "last_compliance_review": null, "active": true },
     { "stage": "WRONG_NUMBER", "internal_object": "Lead", "internal_field": "Bad_Number__c", "internal_values": ["true"], "customer_wording": null, "next_step": null, "verification_level": 0, "human_escalation_required": false, "last_compliance_review": null, "active": true }
   ]
 }
