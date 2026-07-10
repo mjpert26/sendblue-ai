@@ -1,0 +1,21 @@
+{
+  "name": "sendblue-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Big Think Capital — Emma, the AI business-funding assistant (Sendblue + n8n + Claude + Salesforce + Slack)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "validate": "node scripts/validate-workflows.mjs",
+    "validate:config": "node scripts/validate-workflows.mjs --config-only",
+    "test": "node scripts/test-fixtures.mjs",
+    "test:report": "node scripts/test-fixtures.mjs --write-report",
+    "inspect:sendblue": "node scripts/inspect-sendblue.mjs",
+    "inspect:salesforce": "node scripts/inspect-salesforce-fields.mjs",
+    "generate:sf-map": "node scripts/generate-salesforce-map.mjs",
+    "deploy:n8n": "node scripts/deploy-n8n.mjs"
+  },
+  "license": "UNLICENSED"
+}
