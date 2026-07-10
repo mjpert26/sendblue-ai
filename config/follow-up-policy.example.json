@@ -1,0 +1,49 @@
+{
+  "$comment": "Follow-up and outreach rules. Salesforce is the preferred business-state source for follow-up scheduling; the n8n followup_jobs Data Table is a technical fallback only.",
+  "version": "1.0.0",
+  "followups": {
+    "enabled": true,
+    "max_attempts": 3,
+    "schedule_hours_after_last_inbound": [24, 72, 168],
+    "cancel_on_customer_reply": true,
+    "recheck_before_send": [
+      "global_ai_enabled", "followups_enabled", "sms_opt_out", "wrong_number",
+      "human_takeover", "ai_enabled", "consent", "appointment_status",
+      "stage_still_eligible", "no_inbound_since_scheduled", "messaging_hours"
+    ],
+    "eligible_stages": ["NEW_LEAD", "CONTACTED", "QUALIFYING", "APPLICATION_NOT_STARTED", "APPLICATION_LINK_SENT", "APPLICATION_STARTED"],
+    "ineligible_stages_note": "Never auto-follow-up in offer/contract/underwriting stages — those belong to the specialist."
+  },
+  "messaging_hours": {
+    "timezone": "America/New_York",
+    "start": "09:00",
+    "end": "20:00",
+    "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    "inbound_replies_exempt": true
+  },
+  "rate_limits": {
+    "outbound_per_minute_global": 20,
+    "outbound_per_contact_per_hour": 4
+  },
+  "debounce": {
+    "$comment": "SB-04 debounces rapid consecutive inbound messages so one combined reply is generated.",
+    "inbound_debounce_seconds": 20
+  },
+  "outreach_journey_f": {
+    "enabled": false,
+    "$comment": "DISABLED BY DEFAULT. Lead existence is NOT consent (ASSUMPTIONS A-18). All conditions below must pass per record.",
+    "requires": {
+      "valid_phone": true,
+      "sms_consent_true": true,
+      "consent_source_in": ["PLACEHOLDER_web_form_optin"],
+      "consent_max_age_days": 365,
+      "not_opted_out": true,
+      "not_wrong_number": true,
+      "not_human_takeover": true,
+      "no_prior_same_outreach": true,
+      "messaging_hours": true
+    },
+    "template_id": "outreach_intro_v1",
+    "daily_cap": 50
+  }
+}

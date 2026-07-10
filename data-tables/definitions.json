@@ -1,0 +1,132 @@
+{
+  "$comment": "Required n8n Data Tables. Create these in the n8n UI (Data Tables) with the columns below before importing workflows. Technical state ONLY — never CRM data or transcripts (docs/ARCHITECTURE.md). Column types use n8n Data Table primitives: string | number | boolean | date.",
+  "version": "1.0.0",
+  "tables": [
+    {
+      "name": "agent_config",
+      "purpose": "Global agent configuration incl. kill switches. Single-row-per-key.",
+      "columns": [
+        { "name": "key", "type": "string", "unique": true },
+        { "name": "value", "type": "string" },
+        { "name": "updated_by", "type": "string" },
+        { "name": "updated_at", "type": "date" }
+      ],
+      "required_keys": [
+        "global_ai_enabled", "outbound_enabled", "followups_enabled",
+        "status_lookup_enabled", "test_mode", "assistant_name",
+        "rate_limit_per_minute", "test_allowlist_numbers"
+      ]
+    },
+    {
+      "name": "processed_messages",
+      "purpose": "Inbound idempotency by Sendblue message_handle.",
+      "columns": [
+        { "name": "message_handle", "type": "string", "unique": true },
+        { "name": "correlation_id", "type": "string" },
+        { "name": "normalized_phone_hash", "type": "string" },
+        { "name": "processed_at", "type": "date" },
+        { "name": "outcome", "type": "string" }
+      ],
+      "retention_days": 30
+    },
+    {
+      "name": "outbound_idempotency",
+      "purpose": "Outbound idempotency keys + technical delivery state (message_handle, status). Never message content.",
+      "columns": [
+        { "name": "idempotency_key", "type": "string", "unique": true },
+        { "name": "correlation_id", "type": "string" },
+        { "name": "message_handle", "type": "string" },
+        { "name": "delivery_status", "type": "string" },
+        { "name": "accepted_by_sendblue", "type": "boolean" },
+        { "name": "created_at", "type": "date" },
+        { "name": "updated_at", "type": "date" },
+        { "name": "failure_count", "type": "number" }
+      ],
+      "retention_days": 30
+    },
+    {
+      "name": "contact_locks",
+      "purpose": "Temporary per-contact processing locks (debounce + serialization).",
+      "columns": [
+        { "name": "normalized_phone_hash", "type": "string", "unique": true },
+        { "name": "correlation_id", "type": "string" },
+        { "name": "locked_at", "type": "date" },
+        { "name": "expires_at", "type": "date" }
+      ],
+      "retention_days": 1
+    },
+    {
+      "name": "retry_state",
+      "purpose": "Retry counters for transient upstream failures.",
+      "columns": [
+        { "name": "retry_key", "type": "string", "unique": true },
+        { "name": "category", "type": "string" },
+        { "name": "attempts", "type": "number" },
+        { "name": "next_attempt_at", "type": "date" },
+        { "name": "last_error_code", "type": "string" }
+      ],
+      "retention_days": 7
+    },
+    {
+      "name": "dead_letter_events",
+      "purpose": "Sanitized non-retryable failures for review/replay (SB-10). No message bodies, no PII beyond hashed phone.",
+      "columns": [
+        { "name": "event_id", "type": "string", "unique": true },
+        { "name": "correlation_id", "type": "string" },
+        { "name": "workflow_name", "type": "string" },
+        { "name": "category", "type": "string" },
+        { "name": "error_code", "type": "string" },
+        { "name": "sanitized_summary", "type": "string" },
+        { "name": "message_handle", "type": "string" },
+        { "name": "salesforce_record_ref", "type": "string" },
+        { "name": "replayable", "type": "boolean" },
+        { "name": "replayed_at", "type": "date" },
+        { "name": "created_at", "type": "date" }
+      ],
+      "retention_days": 90
+    },
+    {
+      "name": "approved_faq",
+      "purpose": "Optional runtime cache of active approved FAQ entries imported from config/approved-faq.json.",
+      "columns": [
+        { "name": "faq_id", "type": "string", "unique": true },
+        { "name": "intent", "type": "string" },
+        { "name": "question", "type": "string" },
+        { "name": "answer", "type": "string" },
+        { "name": "required_verification_level", "type": "number" },
+        { "name": "active", "type": "boolean" },
+        { "name": "review_version", "type": "number" },
+        { "name": "approved", "type": "boolean" }
+      ]
+    },
+    {
+      "name": "followup_jobs",
+      "purpose": "Technical follow-up jobs ONLY when Salesforce cannot store them (followup_date/attempt unmapped). Salesforce remains preferred (A-20).",
+      "columns": [
+        { "name": "job_id", "type": "string", "unique": true },
+        { "name": "salesforce_record_ref", "type": "string" },
+        { "name": "normalized_phone_hash", "type": "string" },
+        { "name": "due_at", "type": "date" },
+        { "name": "attempt", "type": "number" },
+        { "name": "status", "type": "string" },
+        { "name": "reason", "type": "string" },
+        { "name": "created_at", "type": "date" },
+        { "name": "resolved_at", "type": "date" },
+        { "name": "resolution", "type": "string" }
+      ],
+      "retention_days": 60
+    },
+    {
+      "name": "test_results",
+      "purpose": "SB-11 test harness execution results.",
+      "columns": [
+        { "name": "run_id", "type": "string" },
+        { "name": "case_id", "type": "string" },
+        { "name": "passed", "type": "boolean" },
+        { "name": "detail", "type": "string" },
+        { "name": "executed_at", "type": "date" }
+      ],
+      "retention_days": 30
+    }
+  ]
+}

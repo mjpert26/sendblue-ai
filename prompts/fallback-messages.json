@@ -1,0 +1,21 @@
+{
+  "$comment": "Deterministic templates used when model output is invalid/unsafe or for compliance-mandated replies. {assistant_name}/{company_name}/{application_link}/{rep_first_name} substituted at runtime. ALL WORDING IS PLACEHOLDER pending compliance approval (COMPLIANCE-REVIEW.md §2). Template ids must stay in sync with config/compliance-rules whitelisted_template_ids.",
+  "version": "1.0.0",
+  "templates": {
+    "fallback_generic": "Thanks for your message! I want to make sure you get an accurate answer, so I'm looping in a member of our team who will follow up with you here.",
+    "opt_out_confirmation": "You've been unsubscribed and won't receive further messages from us. Reply HELP if you ever need assistance.",
+    "wrong_number_apology": "Apologies for the mix-up — we won't message this number again.",
+    "sensitive_info_warning": "For your security, please don't send personal or account details by text — I can't accept them here. Everything sensitive goes through our secure application instead.",
+    "media_redirect_secure_portal": "I can't accept documents over text, for your security. Please upload anything needed through your secure application portal, and let me know if you need the link again.",
+    "handoff_transfer": "You're all set — a member of our team will take it from here and reach out to you shortly.",
+    "application_link": "Here's your secure application link: {application_link} — it only takes a few minutes. I'm here if any questions come up.",
+    "status_response": "{status_wording} {next_step}",
+    "identity_confirmation_request": "Happy to check on that. To make sure I'm looking at the right file, could you confirm the name of your business?",
+    "identity_confirmation_failed": "I wasn't able to match that to the file for this number, so I'll have a member of our team follow up with you directly.",
+    "verification_escalation": "That detail needs a quick identity check we do person-to-person. I've asked a specialist to reach out — or call us and we'll pull up your file.",
+    "ambiguous_record": "I see more than one file that could be yours, so rather than guess I've asked our team to sort it out and follow up with you.",
+    "outside_scope": "That's outside what I can help with by text, but I've flagged it for our team to follow up.",
+    "human_takeover_active": null,
+    "$human_takeover_note": "null = send nothing; the human owns the thread."
+  }
+}

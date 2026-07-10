@@ -1,0 +1,39 @@
+{
+  "$comment": "When and how conversations hand off to humans (SB-09).",
+  "version": "1.0.0",
+  "triggers": {
+    "customer_requests_human": true,
+    "qualification_complete": true,
+    "complaint": true,
+    "fraud_or_identity_theft_report": true,
+    "legal_or_compliance_topic": true,
+    "underwriting_or_pricing_question": true,
+    "ambiguous_record_match": true,
+    "low_model_confidence_below": 0.55,
+    "repeated_sensitive_data": true,
+    "stage_requires_human": true
+  },
+  "handoff_actions": {
+    "set_human_takeover": true,
+    "cancel_followups": true,
+    "stop_typing_indicator": true,
+    "create_salesforce_task": {
+      "subject_template": "[{assistant_name} AI] Handoff: {handoff_reason}",
+      "priority_map": { "complaint": "High", "fraud_or_identity_theft_report": "High", "default": "Normal" }
+    },
+    "notify_owner_slack": true,
+    "slack_channel_env": "SLACK_HANDOFF_CHANNEL_ID",
+    "slack_summary_includes": ["qualification_summary", "salesforce_record_link", "customer_request", "urgency", "correlation_id"],
+    "send_transfer_message": true,
+    "transfer_message_template_id": "handoff_transfer"
+  },
+  "resume": {
+    "authorized_via": ["n8n_manual_workflow", "salesforce_field_cleared_by_user"],
+    "rechecks": ["sms_opt_out", "sms_consent", "wrong_number", "global_ai_enabled"],
+    "record_resumed_by_and_when": true
+  },
+  "urgency_keywords": {
+    "high": ["today", "asap", "urgent", "immediately", "right now", "emergency"],
+    "medium": ["this week", "soon", "quickly"]
+  }
+}

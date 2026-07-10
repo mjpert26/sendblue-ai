@@ -1,0 +1,74 @@
+{
+  "$comment": "Deterministic compliance rules enforced by n8n BEFORE and AFTER the model. Opt-out detection runs before Claude is invoked (SB-01). Outbound validation runs on every candidate message (SB-06).",
+  "version": "1.0.0",
+  "opt_out": {
+    "exact_phrases": [
+      "stop", "unsubscribe", "cancel", "opt out", "optout", "remove me",
+      "stop texting", "stop messaging me", "do not text me", "don't text me",
+      "no more texts", "leave me alone", "take me off your list", "i never signed up"
+    ],
+    "natural_language_patterns": [
+      "stop (contacting|texting|messaging|calling) me",
+      "(don'?t|do not) (text|message|contact) me( again| anymore)?",
+      "take me off (the|your) list",
+      "remove (me|my number)",
+      "quit texting"
+    ],
+    "false_positive_guards": [
+      "$comment: a message matches opt-out ONLY when the phrase is the whole message (after trim/punctuation) or a standalone sentence with no negating continuation. Examples that must NOT opt out:",
+      "do not stop processing my application",
+      "don't stop",
+      "please don't cancel my application",
+      "i don't want to stop the process"
+    ],
+    "confirmation_message_max": 1,
+    "confirmation_template_id": "opt_out_confirmation",
+    "no_auto_opt_in_after_casual_message": true
+  },
+  "wrong_number": {
+    "patterns": ["wrong number", "wrong person", "you have the wrong", "who is this\\? i never", "i'?m not [a-z]+, wrong"],
+    "apologize_once_template_id": "wrong_number_apology",
+    "suppress_after": true
+  },
+  "sensitive_data": {
+    "detectors": {
+      "ssn": "\\b\\d{3}[- ]?\\d{2}[- ]?\\d{4}\\b",
+      "card_number": "\\b(?:\\d[ -]*?){13,19}\\b",
+      "routing_number_context": "(routing|aba)[^\\d]{0,20}\\d{9}\\b",
+      "account_number_context": "(account|acct)[^\\d]{0,20}\\d{6,17}\\b",
+      "credentials": "(password|passcode|pin)\\s*[:=]?\\s*\\S+",
+      "dob": "\\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\\d|3[01])[/-](19|20)\\d{2}\\b"
+    },
+    "on_detection": [
+      "do_not_repeat_value",
+      "do_not_copy_to_salesforce",
+      "redact_in_logs",
+      "reply_with_template:sensitive_info_warning",
+      "escalate_if_repeated"
+    ]
+  },
+  "outbound_validation": {
+    "forbidden_content_patterns": [
+      "guarantee(d)? (approval|rate|funding|amount|term)",
+      "you (are|'re) approved",
+      "\\b(apr|interest rate) of\\b",
+      "we are a bank",
+      "government[- ]backed guarantee",
+      "no credit check"
+    ],
+    "$forbidden_comment": "Blocks AI-generated text containing unapproved claims. Deterministic templates from approved config bypass pattern checks only if template id is whitelisted below.",
+    "whitelisted_template_ids": ["opt_out_confirmation", "wrong_number_apology", "sensitive_info_warning", "handoff_transfer", "fallback_generic", "application_link", "status_response"],
+    "max_message_length": 900,
+    "block_empty": true,
+    "block_urls_except": ["APPLICATION_LINK_BASE_URL"]
+  },
+  "media_messages": {
+    "never_process_documents": true,
+    "reply_template_id": "media_redirect_secure_portal",
+    "escalate_if_looks_like_financial_document": true
+  },
+  "prompt_injection": {
+    "$comment": "Model output flagged prompt_injection OR containing these markers is discarded; fallback template used.",
+    "output_markers": ["system prompt", "ignore previous", "as an ai", "my instructions"]
+  }
+}
