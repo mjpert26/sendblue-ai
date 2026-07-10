@@ -24,3 +24,6 @@ npm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+
+# Salesforce discovery output (org metadata — never commit)
+config/salesforce-describe.generated.json
