@@ -1,0 +1,148 @@
+{
+  "name": "SB-03 Record Resolver and Verification",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "core-sync": "1.0.0",
+    "description": "Resolves a normalized phone number to the correct Salesforce record with a deterministic search order, resolves converted leads and related Opportunity/application records, never guesses between multiple matches, computes the verification level, and emits a sanitized context object."
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "nodes": [
+    {
+      "id": "sb03-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "correlation_id", "type": "string" },
+            { "name": "customer_number", "type": "string" },
+            { "name": "customer_ref", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb03-buildsoql",
+      "name": "Build Deterministic SOQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — deterministic exact-match search order (no substring matching):\n// 1 Lead.MobilePhone, 2 Lead.Phone, 3 Contact.MobilePhone, 4 Contact.Phone,\n// 5 Person Account phone (when enabled), 6 configured custom phone fields.\n// Field map is provided via SF_FIELD_MAP_JSON (resolved local copy of config/salesforce-field-map.json).\nconst map = JSON.parse($env.SF_FIELD_MAP_JSON || '{}');\nconst m = map.mappings || {};\nconst f = (k, fb) => (m[k] && m[k].field !== 'UNMAPPED' ? m[k].field : fb);\nconst phone = $json.customer_number;\nif (!/^\\+\\d{8,15}$/.test(phone || '')) throw new Error('SB-03: customer_number is not E.164');\nconst esc = phone.replace(/'/g, '');\n// Salesforce stores phones inconsistently; we match on exact E.164 plus the common US 10-digit form — still exact-value equality, never LIKE.\nconst bare = esc.replace(/^\\+1/, '');\nconst tenDigit = bare.length === 10 ? `${bare.slice(0,3)}-${bare.slice(3,6)}-${bare.slice(6)}` : null;\nconst variants = [esc, bare, tenDigit, tenDigit ? `(${bare.slice(0,3)}) ${bare.slice(3,6)}-${bare.slice(6)}` : null].filter(Boolean);\nconst inList = variants.map(v => `'${v}'`).join(',');\nconst optFields = ['ai_enabled','human_takeover','sms_consent','sms_opt_out','wrong_number','conversation_stage','application_link','followup_date','followup_attempt','appointment_status','last_inbound_date']\n  .map(k => m[k]).filter(s => s && s.object === 'Lead' && s.field !== 'UNMAPPED').map(s => s.field);\nconst leadFields = ['Id','IsConverted','ConvertedContactId','ConvertedAccountId','ConvertedOpportunityId','FirstName','LastName','Company','OwnerId','Status', f('email','Email'), ...optFields].filter((v,i,a) => a.indexOf(v) === i);\nconst soqlLead = `SELECT ${leadFields.join(', ')} FROM Lead WHERE ${f('mobile_phone','MobilePhone')} IN (${inList}) OR ${f('phone','Phone')} IN (${inList})`;\nconst soqlContact = `SELECT Id, FirstName, LastName, AccountId, OwnerId, MailingPostalCode FROM Contact WHERE MobilePhone IN (${inList}) OR Phone IN (${inList})`;\nreturn [{ json: { ...$json, soqlLead, soqlContact, field_map_present: !!map.mappings, phone_variants: variants } }];"
+      }
+    },
+    {
+      "id": "sb03-qlead",
+      "name": "Salesforce: Query Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/query",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "q", "value": "={{ $json.soqlLead }}" }] },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api"
+      },
+      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+    },
+    {
+      "id": "sb03-qcontact",
+      "name": "Salesforce: Query Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/query",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "q", "value": "={{ $('Build Deterministic SOQL').first().json.soqlContact }}" }] },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api"
+      },
+      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+    },
+    {
+      "id": "sb03-resolve",
+      "name": "Resolve Record (Never Guess)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — mirrors resolveRecord in scripts/lib/agent-core.mjs.\nconst src = $('Build Deterministic SOQL').first().json;\nconst map = JSON.parse($env.SF_FIELD_MAP_JSON || '{}');\nconst m = map.mappings || {};\nconst fname = (k) => (m[k] && m[k].field !== 'UNMAPPED') ? m[k].field : null;\nlet leadRes = {}, contactRes = {};\ntry { leadRes = $('Salesforce: Query Leads').first().json; } catch (e) { leadRes = { __failed: true }; }\ntry { contactRes = $('Salesforce: Query Contacts').first().json; } catch (e) { contactRes = { __failed: true }; }\nif (leadRes.__failed || contactRes.__failed) {\n  return [{ json: { correlation_id: src.correlation_id, outcome: 'resolver_error', detail: 'salesforce query failed', customer_ref: src.customer_ref } }];\n}\nconst leads = (leadRes.records || []).map(r => ({ object: 'Lead', id: r.Id, isConverted: r.IsConverted === true, convertedContactId: r.ConvertedContactId || null, convertedOpportunityId: r.ConvertedOpportunityId || null, raw: r }));\nconst contacts = (contactRes.records || []).map(r => ({ object: 'Contact', id: r.Id, raw: r }));\n// Deterministic priority: Lead matches take precedence over Contact matches;\n// a converted Lead resolves to its Contact. Priority only breaks ties BETWEEN\n// objects — multiple records within the winning object level is still ambiguous.\nconst pool = leads.length ? leads : contacts;\nconst mapped = pool.map(c => c.object === 'Lead' && c.isConverted && c.convertedContactId ? { ...c, resolvedObject: 'Contact', resolvedId: c.convertedContactId, viaConvertedLead: true } : { ...c, resolvedObject: c.object, resolvedId: c.id });\nconst uniq = [...new Set(mapped.map(c => `${c.resolvedObject}:${c.resolvedId}`))];\nlet outcome, record = null;\nif (uniq.length === 0) outcome = 'no_match';\nelse if (uniq.length > 1) outcome = 'multiple_match';\nelse {\n  record = mapped[0];\n  const raw = record.raw || {};\n  const flag = (k) => { const fn = fname(k); return fn && raw[fn] !== undefined ? String(raw[fn]) === 'true' : null; };\n  if (flag('sms_opt_out') === true) outcome = 'opted_out';\n  else if (flag('wrong_number') === true) outcome = 'wrong_number';\n  else if (flag('human_takeover') === true) outcome = 'human_takeover';\n  else if (flag('ai_enabled') === false) outcome = 'ai_disabled';\n  else outcome = 'single_match';\n}\n// Sanitized context: ONLY approved fields; never raw record, never OwnerId exposed to the model.\nlet sanitized = null;\nif (record) {\n  const raw = record.raw || {};\n  const val = (k, fb) => { const fn = fname(k) || fb; return fn ? raw[fn] ?? null : null; };\n  sanitized = {\n    object: record.resolvedObject,\n    record_ref: `${record.resolvedObject}:${record.resolvedId}`,\n    first_name: raw.FirstName ?? null,\n    business_name: raw.Company ?? null,\n    zip_code: raw.MailingPostalCode ?? null,\n    lead_status: raw.Status ?? null,\n    conversation_stage: val('conversation_stage'),\n    ai_enabled: fname('ai_enabled') ? String(raw[fname('ai_enabled')]) === 'true' : true,\n    human_takeover: fname('human_takeover') ? String(raw[fname('human_takeover')]) === 'true' : false,\n    sms_consent: fname('sms_consent') ? String(raw[fname('sms_consent')]) === 'true' : null,\n    sms_opt_out: fname('sms_opt_out') ? String(raw[fname('sms_opt_out')]) === 'true' : false,\n    wrong_number: fname('wrong_number') ? String(raw[fname('wrong_number')]) === 'true' : false,\n    application_link_on_file: !!val('application_link'),\n    via_converted_lead: record.viaConvertedLead === true,\n    converted_opportunity_id: record.convertedOpportunityId || null\n  };\n}\nreturn [{ json: { correlation_id: src.correlation_id, customer_ref: src.customer_ref, customer_number: src.customer_number, outcome, candidate_count: uniq.length, sanitized, record_id: record ? record.resolvedId : null, record_object: record ? record.resolvedObject : null, field_map_present: src.field_map_present } }];"
+      }
+    },
+    {
+      "id": "sb03-needopps",
+      "name": "Has Record With Possible Applications?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.outcome }}", "rightValue": "single_match", "operator": { "type": "string", "operation": "equals" } },
+            { "leftValue": "={{ $json.record_object }}", "rightValue": "Contact", "operator": { "type": "string", "operation": "equals" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb03-qopps",
+      "name": "Salesforce: Query Open Opportunities",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/query",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "=SELECT Id, Name, StageName, IsClosed, OwnerId, CreatedDate FROM Opportunity WHERE IsClosed = false AND Id IN (SELECT OpportunityId FROM OpportunityContactRole WHERE ContactId = '{{ $json.record_id }}') ORDER BY CreatedDate DESC LIMIT 10" }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api"
+      },
+      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+    },
+    {
+      "id": "sb03-final",
+      "name": "Select Application + Verification Level",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 0],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — mirrors selectApplication/verificationLevel in scripts/lib/agent-core.mjs.\nconst res = $('Resolve Record (Never Guess)').first().json;\nlet opps = [];\ntry { const q = $('Salesforce: Query Open Opportunities').first().json; opps = (q.records || []).map(r => ({ id: r.Id, stage: r.StageName, closed: r.IsClosed === true, explicitly_linked: res.sanitized && res.sanitized.converted_opportunity_id === r.Id })); } catch (e) { opps = res.sanitized && res.sanitized.converted_opportunity_id ? [{ id: res.sanitized.converted_opportunity_id, stage: null, closed: false, explicitly_linked: true }] : []; }\nfunction selectApplication(apps) {\n  const list = apps.filter(a => !a.closed);\n  const linked = list.filter(a => a.explicitly_linked);\n  if (linked.length === 1) return { outcome: 'selected', application: linked[0] };\n  if (linked.length > 1) return { outcome: 'ambiguous', candidates: linked.map(a => a.id) };\n  if (list.length === 1) return { outcome: 'selected', application: list[0] };\n  if (list.length === 0) return { outcome: 'none' };\n  return { outcome: 'ambiguous', candidates: list.map(a => a.id) };\n}\nconst appSel = selectApplication(opps);\n// Verification: level 0 by default. Level 1 requires exactly one match + a\n// confirmed non-sensitive factor — the CONFIRMATION happens conversationally in\n// SB-04/SB-05; here we expose which factors are available to confirm against.\nconst verification = {\n  current_level: 0,\n  level1_available: res.outcome === 'single_match',\n  confirmation_factors_available: res.sanitized ? ['first_name', 'business_name', 'zip_code'].filter(k => !!res.sanitized[k]) : [],\n  level2_provider_configured: !!($env.VERIFICATION_LEVEL2_PROVIDER_URL)\n};\nconst out = { ...res, application_selection: appSel, verification };\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-03', workflow_version: '1.0.0', correlation_id: res.correlation_id, action: 'resolve', outcome: res.outcome, application_outcome: appSel.outcome, record_ref: res.sanitized ? res.sanitized.record_ref : null, ts: new Date().toISOString() }));\nreturn [{ json: out }];"
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": { "main": [[{ "node": "Build Deterministic SOQL", "type": "main", "index": 0 }]] },
+    "Build Deterministic SOQL": {
+      "main": [[
+        { "node": "Salesforce: Query Leads", "type": "main", "index": 0 },
+        { "node": "Salesforce: Query Contacts", "type": "main", "index": 0 }
+      ]]
+    },
+    "Salesforce: Query Leads": { "main": [[{ "node": "Resolve Record (Never Guess)", "type": "main", "index": 0 }], [{ "node": "Resolve Record (Never Guess)", "type": "main", "index": 0 }]] },
+    "Salesforce: Query Contacts": { "main": [[{ "node": "Resolve Record (Never Guess)", "type": "main", "index": 0 }], [{ "node": "Resolve Record (Never Guess)", "type": "main", "index": 0 }]] },
+    "Resolve Record (Never Guess)": { "main": [[{ "node": "Has Record With Possible Applications?", "type": "main", "index": 0 }]] },
+    "Has Record With Possible Applications?": {
+      "main": [
+        [{ "node": "Salesforce: Query Open Opportunities", "type": "main", "index": 0 }],
+        [{ "node": "Select Application + Verification Level", "type": "main", "index": 0 }]
+      ]
+    },
+    "Salesforce: Query Open Opportunities": { "main": [[{ "node": "Select Application + Verification Level", "type": "main", "index": 0 }], [{ "node": "Select Application + Verification Level", "type": "main", "index": 0 }]] }
+  }
+}

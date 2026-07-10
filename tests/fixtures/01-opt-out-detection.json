@@ -1,0 +1,20 @@
+{
+  "$comment": "Deterministic opt-out detection — runs BEFORE Claude. All numbers fictional (+1555…).",
+  "cases": [
+    { "id": "optout-stop", "kind": "opt_out", "description": "STOP alone opts out", "input": { "message": "STOP" }, "expected": { "optOut": true } },
+    { "id": "optout-stop-punct", "kind": "opt_out", "description": "'Stop.' with punctuation opts out", "input": { "message": "Stop." }, "expected": { "optOut": true } },
+    { "id": "optout-unsubscribe", "kind": "opt_out", "description": "unsubscribe opts out", "input": { "message": "unsubscribe" }, "expected": { "optOut": true } },
+    { "id": "optout-cancel", "kind": "opt_out", "description": "cancel alone opts out", "input": { "message": "cancel" }, "expected": { "optOut": true } },
+    { "id": "optout-remove-me", "kind": "opt_out", "description": "remove me opts out", "input": { "message": "Remove me" }, "expected": { "optOut": true } },
+    { "id": "optout-stop-texting", "kind": "opt_out", "description": "stop texting mid-message opts out", "input": { "message": "Please stop texting me" }, "expected": { "optOut": true } },
+    { "id": "optout-take-me-off", "kind": "opt_out", "description": "take me off your list opts out", "input": { "message": "take me off your list please" }, "expected": { "optOut": true } },
+    { "id": "optout-never-signed-up", "kind": "opt_out", "description": "I never signed up opts out", "input": { "message": "I never signed up" }, "expected": { "optOut": true } },
+    { "id": "optout-natural-language", "kind": "opt_out", "description": "natural-language opt-out", "input": { "message": "quit texting me man" }, "expected": { "optOut": true } },
+    { "id": "optout-dont-text", "kind": "opt_out", "description": "don't text me again opts out", "input": { "message": "don't text me again" }, "expected": { "optOut": true } },
+    { "id": "optout-fp-processing", "kind": "opt_out", "description": "FALSE POSITIVE guard: 'Do not stop processing my application.'", "input": { "message": "Do not stop processing my application." }, "expected": { "optOut": false } },
+    { "id": "optout-fp-dont-stop", "kind": "opt_out", "description": "FALSE POSITIVE guard: 'please don't stop'", "input": { "message": "please don't stop" }, "expected": { "optOut": false } },
+    { "id": "optout-fp-dont-cancel", "kind": "opt_out", "description": "FALSE POSITIVE guard: don't cancel my application", "input": { "message": "please don't cancel my application" }, "expected": { "optOut": false } },
+    { "id": "optout-fp-stop-mid-sentence", "kind": "opt_out", "description": "'stop' embedded mid-sentence does not opt out", "input": { "message": "I can't stop thinking about the loan offer" }, "expected": { "optOut": false } },
+    { "id": "optout-fp-normal-question", "kind": "opt_out", "description": "ordinary funding question is not an opt-out", "input": { "message": "What do I need to apply for funding?" }, "expected": { "optOut": false } }
+  ]
+}

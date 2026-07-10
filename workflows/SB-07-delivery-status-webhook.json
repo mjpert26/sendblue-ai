@@ -1,0 +1,144 @@
+{
+  "name": "SB-07 Delivery Status Webhook",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "description": "Processes Sendblue delivery-status callbacks idempotently by message_handle. Alerts on repeated failures, auth errors, line failures and rate limits. Never resends because a status callback repeated."
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "nodes": [
+    {
+      "id": "sb07-webhook",
+      "name": "Sendblue Status Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sendblue/status",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "sb07-verify",
+      "name": "Verify Secret + Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "parameters": {
+        "jsCode": "// Same secret scheme as SB-01 (ASSUMPTIONS A-03). Unknown statuses are flagged, not guessed (A-02).\nconst headerName = ($env.SENDBLUE_WEBHOOK_SECRET_HEADER || 'sb-signing-secret').toLowerCase();\nconst expected = $env.SENDBLUE_WEBHOOK_SECRET || '';\nconst headers = $json.headers || {};\nconst got = headers[headerName] || '';\nlet ok = expected.length > 0 && got.length === expected.length;\nif (ok) { let d = 0; for (let i = 0; i < expected.length; i++) d |= expected.charCodeAt(i) ^ got.charCodeAt(i); ok = d === 0; }\nconst body = $json.body || {};\nconst KNOWN = ['REGISTERED','PENDING','SENT','DELIVERED','RECEIVED','QUEUED','ERROR','DECLINED','ACCEPTED','SUCCESS'];\nconst status = String(body.status || '').toUpperCase();\nreturn [{ json: { secret_valid: ok, message_handle: body.message_handle || null, status, known_status: KNOWN.includes(status), error_code: body.error_code ?? null, error_message: body.error_message ? String(body.error_message).slice(0, 200) : null, is_outbound: body.is_outbound === true || String(body.is_outbound) === 'true' } }];"
+      }
+    },
+    {
+      "id": "sb07-secret-ok",
+      "name": "Secret Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [400, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [{ "leftValue": "={{ $json.secret_valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }]
+        }
+      }
+    },
+    {
+      "id": "sb07-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [600, 160],
+      "parameters": { "respondWith": "json", "responseBody": "={{ { \"error\": \"invalid signing secret\" } }}", "options": { "responseCode": 401 } }
+    },
+    {
+      "id": "sb07-200",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [600, -120],
+      "parameters": { "respondWith": "json", "responseBody": "={{ { \"received\": true } }}", "options": { "responseCode": 200 } }
+    },
+    {
+      "id": "sb07-update",
+      "name": "Update Delivery Row (Idempotent)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [820, -120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "outbound_idempotency" },
+        "filters": {
+          "conditions": [{ "keyName": "message_handle", "condition": "eq", "keyValue": "={{ $json.message_handle }}" }]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "delivery_status": "={{ $json.status }}",
+            "updated_at": "={{ $now.toISO() }}",
+            "failure_count": "={{ ['ERROR','DECLINED'].includes($json.status) ? 1 : 0 }}"
+          }
+        },
+        "options": { "$comment": "Update-by-handle is naturally idempotent: a repeated callback rewrites the same row and NEVER triggers a resend. Unmatched handles (inbound RECEIVED events, foreign messages) fall through the error branch and are ignored." }
+      }
+    },
+    {
+      "id": "sb07-alerts",
+      "name": "Failure Alert Policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, -120],
+      "parameters": {
+        "jsCode": "// Decide whether this status merits an ops alert (grouped, not per-event spam).\nconst j = $('Verify Secret + Normalize').first().json;\nlet alert = null;\nif (!j.known_status && j.status) alert = { kind: 'unknown_status', detail: `Unrecognized Sendblue status \"${j.status}\" — verify against current docs (ASSUMPTIONS A-02)` };\nelse if (j.status === 'ERROR' || j.status === 'DECLINED') {\n  const code = String(j.error_code || '');\n  if (code === '401' || /auth/i.test(j.error_message || '')) alert = { kind: 'auth_error', detail: 'Sendblue reports authentication error on send — check API keys' };\n  else if (code === '429' || /rate/i.test(j.error_message || '')) alert = { kind: 'rate_limit', detail: 'Sendblue rate limiting detected' };\n  else if (/line|number/i.test(j.error_message || '')) alert = { kind: 'line_failure', detail: 'Possible line failure on the dedicated number' };\n  else alert = { kind: 'delivery_failure', detail: `Delivery ${j.status} (code ${code || 'n/a'})` };\n}\nif (!alert) return [];\nconsole.log(JSON.stringify({ level: 'warn', workflow: 'SB-07', workflow_version: '1.0.0', action: 'delivery_alert', kind: alert.kind, message_handle: j.message_handle, ts: new Date().toISOString() }));\nreturn [{ json: { ...alert, message_handle: j.message_handle, status: j.status } }];"
+      }
+    },
+    {
+      "id": "sb07-slack",
+      "name": "Slack: Ops Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1260, -120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $env.SLACK_ALERTS_CHANNEL_ID, text: `:warning: Sendblue delivery alert — ${$json.kind}: ${$json.detail} (handle ${$json.message_handle || 'n/a'})` }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": { "timeout": 10000 }
+      },
+      "credentials": { "slackApi": { "id": "__PLACEHOLDER__", "name": "Slack API [placeholder]" } }
+    },
+    {
+      "id": "sb07-ignore",
+      "name": "Ignore Unmatched Handle",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1040, 40],
+      "parameters": {},
+      "notes": "Status events whose handle we never sent (e.g. inbound RECEIVED) are ignored — never resent, never alerted."
+    }
+  ],
+  "connections": {
+    "Sendblue Status Webhook": { "main": [[{ "node": "Verify Secret + Normalize", "type": "main", "index": 0 }]] },
+    "Verify Secret + Normalize": { "main": [[{ "node": "Secret Valid?", "type": "main", "index": 0 }]] },
+    "Secret Valid?": {
+      "main": [
+        [{ "node": "Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "Respond 401", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond 200": { "main": [[{ "node": "Update Delivery Row (Idempotent)", "type": "main", "index": 0 }]] },
+    "Update Delivery Row (Idempotent)": {
+      "main": [
+        [{ "node": "Failure Alert Policy", "type": "main", "index": 0 }],
+        [{ "node": "Ignore Unmatched Handle", "type": "main", "index": 0 }]
+      ]
+    },
+    "Failure Alert Policy": { "main": [[{ "node": "Slack: Ops Alert", "type": "main", "index": 0 }]] },
+    "Slack: Ops Alert": { "main": [[], []] }
+  }
+}

@@ -1,0 +1,46 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Workflow validation + test harness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No credentials, no network calls: the validator and harness are fully offline.
+      - name: Validate workflows, configs and security rules
+        run: node scripts/validate-workflows.mjs
+
+      - name: Run mocked test harness
+        run: node scripts/test-fixtures.mjs
+
+      - name: Verify expected results
+        run: |
+          node -e "
+            const rep = require('./tests/output/test-report.json');
+            const exp = require('./tests/expected-results/summary.json');
+            if (rep.failed !== exp.expected_failures) { console.error('failures: ' + rep.failed); process.exit(1); }
+            if (rep.total < exp.expected_total) { console.error('case count regressed: ' + rep.total + ' < ' + exp.expected_total); process.exit(1); }
+            console.log('Expected results verified: ' + rep.passed + '/' + rep.total);
+          "
+
+      - name: Upload machine-readable report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: tests/output/test-report.json

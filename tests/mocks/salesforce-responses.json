@@ -1,0 +1,27 @@
+{
+  "$comment": "Mock Salesforce REST responses used to reason about SB-03/SB-05/SB-06 behavior in UAT. All ids/values fictional.",
+  "query_lead_single": {
+    "totalSize": 1, "done": true,
+    "records": [{ "attributes": { "type": "Lead" }, "Id": "00QMOCK000000001", "IsConverted": false, "FirstName": "Sam", "LastName": "Rivera", "Company": "Blue Sky Bakery", "Status": "PLACEHOLDER_Qualifying", "OwnerId": "005MOCK000000001", "Email": null }]
+  },
+  "query_lead_none": { "totalSize": 0, "done": true, "records": [] },
+  "query_lead_converted": {
+    "totalSize": 1, "done": true,
+    "records": [{ "attributes": { "type": "Lead" }, "Id": "00QMOCK000000002", "IsConverted": true, "ConvertedContactId": "003MOCK000000009", "ConvertedAccountId": "001MOCK000000009", "ConvertedOpportunityId": "006MOCK000000009", "FirstName": "Dana", "LastName": "Cho", "Company": "Cho Logistics", "Status": "PLACEHOLDER_Working" }]
+  },
+  "query_contacts_multiple": {
+    "totalSize": 2, "done": true,
+    "records": [
+      { "attributes": { "type": "Contact" }, "Id": "003MOCK000000001", "FirstName": "Pat", "LastName": "Lee", "AccountId": "001MOCK000000001", "MailingPostalCode": "10001" },
+      { "attributes": { "type": "Contact" }, "Id": "003MOCK000000002", "FirstName": "Pat", "LastName": "Lee", "AccountId": "001MOCK000000002", "MailingPostalCode": "10002" }
+    ]
+  },
+  "query_open_opportunities_two": {
+    "totalSize": 2, "done": true,
+    "records": [
+      { "attributes": { "type": "Opportunity" }, "Id": "006MOCK000000001", "Name": "Working Capital A", "StageName": "PLACEHOLDER_Underwriting", "IsClosed": false },
+      { "attributes": { "type": "Opportunity" }, "Id": "006MOCK000000002", "Name": "Equipment B", "StageName": "PLACEHOLDER_DocsNeeded", "IsClosed": false }
+    ]
+  },
+  "oauth_error_expired": { "error": "invalid_grant", "error_description": "expired access/refresh token" }
+}

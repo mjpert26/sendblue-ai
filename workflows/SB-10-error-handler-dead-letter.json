@@ -1,0 +1,223 @@
+{
+  "name": "SB-10 Error Handler and Dead-Letter",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "description": "Global n8n error workflow. Categorizes retryable vs non-retryable failures, records sanitized dead-letter events (no message bodies, no PII), groups repetitive Slack alerts, and provides a safe idempotency-preserving replay entry point. Never replays a send already accepted by Sendblue."
+  },
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "sb10-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "sb10-categorize",
+      "name": "Categorize + Sanitize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "parameters": {
+        "jsCode": "// Mirrors categorizeError in scripts/lib/agent-core.mjs. Sanitization: keep only\n// technical metadata — never message content, phone numbers, or raw records.\nconst e = $json;\nconst exec = e.execution || {};\nconst wfName = (e.workflow && e.workflow.name) || 'unknown';\nconst lastNode = (exec.lastNodeExecuted) || 'unknown';\nconst errObj = (exec.error) || {};\nconst msg = String(errObj.message || '').slice(0, 300);\nconst status = Number((errObj.httpCode) || (msg.match(/\\b(4\\d\\d|5\\d\\d)\\b/) || [])[0] || 0);\nfunction categorize(sc, timeout) {\n  if (sc === 401 || sc === 403) return { category: 'auth', retryable: false, alert: true };\n  if (sc === 429) return { category: 'rate_limit', retryable: true, alert: true };\n  if (sc >= 500) return { category: 'upstream_5xx', retryable: true, alert: false };\n  if (sc === 408 || timeout) return { category: 'timeout', retryable: true, alert: false };\n  if (sc >= 400) return { category: 'client_error', retryable: false, alert: false };\n  return { category: 'unknown', retryable: false, alert: true };\n}\nconst cat = categorize(status, /timeout|timed out/i.test(msg));\n// Redact anything that looks like a phone number, SSN, or long digit run in the message.\nconst sanitized = msg.replace(/\\+?\\d[\\d\\s().-]{7,}\\d/g, '[REDACTED-NUM]').replace(/\\b\\d{3}-\\d{2}-\\d{4}\\b/g, '[REDACTED]');\nconst correlation = (() => { try { const data = JSON.stringify(exec).match(/emma_[a-z0-9_]+|fu_[a-z0-9_]+|resume_[a-z0-9]+/); return data ? data[0] : null; } catch { return null; } })();\nconst handle = (() => { try { const data = JSON.stringify(exec).match(/\"message_handle\"\\s*:\\s*\"([^\"]{4,80})\"/); return data ? data[1] : null; } catch { return null; } })();\nconst isSendNode = wfName.startsWith('SB-06') && /send/i.test(lastNode);\nreturn [{ json: {\n  event_id: 'dlq_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),\n  correlation_id: correlation, workflow_name: wfName, workflow_version: '1.0.0',\n  execution_id: String(exec.id || ''), failed_node: lastNode,\n  category: cat.category, retryable: cat.retryable, alert: cat.alert,\n  error_code: String(status || errObj.name || 'unknown'), sanitized_summary: sanitized,\n  message_handle: handle,\n  replayable: cat.retryable && !isSendNode,\n  replay_note: isSendNode ? 'NEVER replay: send node — the message may have been accepted by Sendblue; idempotency table is authoritative' : null,\n  created_at: new Date().toISOString()\n} }];"
+      }
+    },
+    {
+      "id": "sb10-store",
+      "name": "Store Dead-Letter Event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [440, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "dead_letter_events" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{ $json.event_id }}",
+            "correlation_id": "={{ $json.correlation_id }}",
+            "workflow_name": "={{ $json.workflow_name }}",
+            "category": "={{ $json.category }}",
+            "error_code": "={{ $json.error_code }}",
+            "sanitized_summary": "={{ $json.sanitized_summary }}",
+            "message_handle": "={{ $json.message_handle }}",
+            "salesforce_record_ref": "",
+            "replayable": "={{ $json.replayable }}",
+            "created_at": "={{ $json.created_at }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb10-group",
+      "name": "Alert Grouping (10-min window)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "parameters": {
+        "jsCode": "// Group repetitive alerts: use workflow static data to suppress duplicates of\n// the same workflow+category within a 10-minute window.\nconst j = $json;\nconst staticData = $getWorkflowStaticData('global');\nconst key = j.workflow_name + '|' + j.category;\nconst now = Date.now();\nstaticData.alerts = staticData.alerts || {};\nconst prev = staticData.alerts[key] || { count: 0, first: now, lastSent: 0 };\nprev.count += 1;\nlet send = false;\nif (j.alert || j.category === 'auth') {\n  if (now - prev.lastSent > 10 * 60 * 1000) { send = true; prev.lastSent = now; }\n}\nstaticData.alerts[key] = prev;\nif (!send) return [];\nreturn [{ json: { ...j, grouped_count: prev.count } }];"
+      }
+    },
+    {
+      "id": "sb10-slack",
+      "name": "Slack: Grouped Error Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $env.SLACK_ALERTS_CHANNEL_ID, text: `:x: *${$json.workflow_name}* ${$json.category} failure (x${$json.grouped_count} in window)\\nNode: ${$json.failed_node}\\nError: ${$json.error_code} — ${$json.sanitized_summary}\\nEvent: ${$json.event_id} · Correlation: ${$json.correlation_id || 'n/a'} · Replayable: ${$json.replayable}` }) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": { "timeout": 10000 }
+      },
+      "credentials": { "slackApi": { "id": "__PLACEHOLDER__", "name": "Slack API [placeholder]" } }
+    },
+    {
+      "id": "sb10-replay-webhook",
+      "name": "Replay Webhook (Authorized)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "emma/replay",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "sb10-replay-auth",
+      "name": "Authorize Replay",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "jsCode": "// Replay is safe because: (1) only replayable events (never accepted sends),\n// (2) SB-01/SB-06 idempotency claims still stand — a replayed inbound event that\n// was already processed dedupes on message_handle; a replayed dispatch dedupes\n// on its idempotency key. Requires the ops token.\nconst body = $json.body || {};\nconst headers = $json.headers || {};\nconst token = headers['x-replay-token'] || body.token || '';\nconst expected = $env.REPLAY_AUTH_TOKEN || '';\nlet ok = expected.length > 0 && token.length === expected.length;\nif (ok) { let d = 0; for (let i = 0; i < expected.length; i++) d |= expected.charCodeAt(i) ^ token.charCodeAt(i); ok = d === 0; }\nreturn [{ json: { authorized: ok, event_id: body.event_id || null } }];"
+      }
+    },
+    {
+      "id": "sb10-replay-authorized",
+      "name": "Replay Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.authorized }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
+            { "leftValue": "={{ $json.event_id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb10-replay-403",
+      "name": "Respond 403 Replay",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [660, 440],
+      "parameters": { "respondWith": "json", "responseBody": "={{ { \"error\": \"unauthorized or missing event_id\" } }}", "options": { "responseCode": 403 } }
+    },
+    {
+      "id": "sb10-replay-load",
+      "name": "Load Dead-Letter Event",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [660, 300],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "dead_letter_events" },
+        "returnAll": false,
+        "limit": 1,
+        "filters": {
+          "conditions": [{ "keyName": "event_id", "condition": "eq", "keyValue": "={{ $json.event_id }}" }]
+        }
+      }
+    },
+    {
+      "id": "sb10-replay-verdict",
+      "name": "Replay Verdict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "parameters": {
+        "jsCode": "// Refuses: non-replayable events, already-replayed events, and anything whose\n// message_handle exists in outbound_idempotency as accepted_by_sendblue.\nconst rows = $input.all().map(i => i.json);\nconst ev = rows.find(r => r.event_id);\nif (!ev) return [{ json: { replay: false, reason: 'event not found', http: 404 } }];\nif (ev.replayable !== true && String(ev.replayable) !== 'true') return [{ json: { replay: false, reason: 'event is not replayable (possibly an accepted send)', http: 409 } }];\nif (ev.replayed_at) return [{ json: { replay: false, reason: 'already replayed at ' + ev.replayed_at, http: 409 } }];\nreturn [{ json: { replay: true, event: ev, http: 200 } }];"
+      }
+    },
+    {
+      "id": "sb10-replay-mark",
+      "name": "Mark Replayed",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [1100, 300],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "dead_letter_events" },
+        "filters": {
+          "conditions": [{ "keyName": "event_id", "condition": "eq", "keyValue": "={{ $json.event ? $json.event.event_id : '' }}" }]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": { "replayed_at": "={{ $now.toISO() }}" }
+        }
+      }
+    },
+    {
+      "id": "sb10-replay-respond",
+      "name": "Respond Replay Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ replay: $('Replay Verdict').first().json.replay, reason: $('Replay Verdict').first().json.reason || 'marked for replay — re-trigger the source workflow with the original correlation id; idempotency claims make it safe', event_id: $('Replay Verdict').first().json.event ? $('Replay Verdict').first().json.event.event_id : null }) }}",
+        "options": { "responseCode": "={{ $('Replay Verdict').first().json.http }}" }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": { "main": [[{ "node": "Categorize + Sanitize", "type": "main", "index": 0 }]] },
+    "Categorize + Sanitize": { "main": [[{ "node": "Store Dead-Letter Event", "type": "main", "index": 0 }]] },
+    "Store Dead-Letter Event": {
+      "main": [
+        [{ "node": "Alert Grouping (10-min window)", "type": "main", "index": 0 }],
+        [{ "node": "Alert Grouping (10-min window)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Alert Grouping (10-min window)": { "main": [[{ "node": "Slack: Grouped Error Alert", "type": "main", "index": 0 }]] },
+    "Slack: Grouped Error Alert": { "main": [[], []] },
+    "Replay Webhook (Authorized)": { "main": [[{ "node": "Authorize Replay", "type": "main", "index": 0 }]] },
+    "Authorize Replay": { "main": [[{ "node": "Replay Authorized?", "type": "main", "index": 0 }]] },
+    "Replay Authorized?": {
+      "main": [
+        [{ "node": "Load Dead-Letter Event", "type": "main", "index": 0 }],
+        [{ "node": "Respond 403 Replay", "type": "main", "index": 0 }]
+      ]
+    },
+    "Load Dead-Letter Event": {
+      "main": [
+        [{ "node": "Replay Verdict", "type": "main", "index": 0 }],
+        [{ "node": "Replay Verdict", "type": "main", "index": 0 }]
+      ]
+    },
+    "Replay Verdict": { "main": [[{ "node": "Mark Replayed", "type": "main", "index": 0 }]] },
+    "Mark Replayed": {
+      "main": [
+        [{ "node": "Respond Replay Result", "type": "main", "index": 0 }],
+        [{ "node": "Respond Replay Result", "type": "main", "index": 0 }]
+      ]
+    }
+  }
+}

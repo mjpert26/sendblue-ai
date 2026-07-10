@@ -1,0 +1,21 @@
+{
+  "$comment": "Example seed rows. SAFE DEFAULTS: everything disabled, test mode on. test_allowlist_numbers holds comma-separated E.164 numbers owned by the team — the reserved 555 examples below are placeholders, not real numbers.",
+  "agent_config": [
+    { "key": "global_ai_enabled", "value": "false", "updated_by": "seed", "updated_at": null },
+    { "key": "outbound_enabled", "value": "false", "updated_by": "seed", "updated_at": null },
+    { "key": "followups_enabled", "value": "false", "updated_by": "seed", "updated_at": null },
+    { "key": "status_lookup_enabled", "value": "true", "updated_by": "seed", "updated_at": null },
+    { "key": "test_mode", "value": "true", "updated_by": "seed", "updated_at": null },
+    { "key": "assistant_name", "value": "Emma", "updated_by": "seed", "updated_at": null },
+    { "key": "rate_limit_per_minute", "value": "20", "updated_by": "seed", "updated_at": null },
+    { "key": "test_allowlist_numbers", "value": "+15550100001,+15550100002", "updated_by": "seed", "updated_at": null }
+  ],
+  "approved_faq": [],
+  "followup_jobs": [],
+  "processed_messages": [],
+  "outbound_idempotency": [],
+  "contact_locks": [],
+  "retry_state": [],
+  "dead_letter_events": [],
+  "test_results": []
+}

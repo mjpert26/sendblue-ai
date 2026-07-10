@@ -1,0 +1,90 @@
+{
+  "$comment": "Logical field map. Copy to salesforce-field-map.json (gitignored) after running npm run generate:sf-map and resolving every UNMAPPED entry. 'UNMAPPED' = no assumption made about your org — required:true + UNMAPPED makes SB-00 health check fail RED; optional UNMAPPED mappings disable the dependent feature safely.",
+  "version": "1.0.0",
+  "api_version": "v61.0",
+  "objects": {
+    "lead": "Lead",
+    "contact": "Contact",
+    "account": "Account",
+    "opportunity": "Opportunity",
+    "task": "Task",
+    "application_custom_object": "UNMAPPED"
+  },
+  "mappings": {
+    "lead_id":               { "object": "Lead", "field": "Id", "required": true },
+    "contact_id":            { "object": "Contact", "field": "Id", "required": true },
+    "account_id":            { "object": "Account", "field": "Id", "required": false },
+    "opportunity_id":        { "object": "Opportunity", "field": "Id", "required": false },
+    "application_id":        { "object": "UNMAPPED", "field": "UNMAPPED", "required": false },
+    "first_name":            { "object": "Lead", "field": "FirstName", "required": true },
+    "last_name":             { "object": "Lead", "field": "LastName", "required": true },
+    "mobile_phone":          { "object": "Lead", "field": "MobilePhone", "required": true },
+    "phone":                 { "object": "Lead", "field": "Phone", "required": true },
+    "email":                 { "object": "Lead", "field": "Email", "required": false },
+    "business_name":         { "object": "Lead", "field": "Company", "required": true },
+    "industry":              { "object": "Lead", "field": "Industry", "required": false },
+    "business_state":        { "object": "Lead", "field": "State", "required": false },
+    "time_in_business":      { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "monthly_gross_revenue": { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "requested_amount":      { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "use_of_funds":          { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "funding_urgency":       { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "current_positions":     { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "preferred_call_time":   { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "lead_source":           { "object": "Lead", "field": "LeadSource", "required": true },
+    "record_owner":          { "object": "Lead", "field": "OwnerId", "required": true },
+    "ai_enabled":            { "object": "Lead", "field": "UNMAPPED", "required": true },
+    "human_takeover":        { "object": "Lead", "field": "UNMAPPED", "required": true },
+    "sms_consent":           { "object": "Lead", "field": "UNMAPPED", "required": true },
+    "consent_source":        { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "consent_timestamp":     { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "sms_opt_out":           { "object": "Lead", "field": "UNMAPPED", "required": true },
+    "wrong_number":          { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "conversation_stage":    { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "application_status":    { "object": "Opportunity", "field": "StageName", "required": false },
+    "missing_item_status":   { "object": "UNMAPPED", "field": "UNMAPPED", "required": false },
+    "application_link":      { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "application_link_sent_date": { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "appointment_status":    { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "last_inbound_date":     { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "last_outbound_date":    { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "followup_date":         { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "followup_attempt":      { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "handoff_reason":        { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "ai_conversation_summary": { "object": "Lead", "field": "Description", "required": false },
+    "sendblue_line":         { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "sendblue_bot_seat":     { "object": "Lead", "field": "UNMAPPED", "required": false },
+    "sendblue_conversation_id": { "object": "Lead", "field": "UNMAPPED", "required": false }
+  },
+  "contact_mirror_mappings_note": "Where a logical field applies to Contacts as well (converted leads), add a parallel entry under mappings_contact with the same key; the resolver falls back object-by-object.",
+  "mappings_contact": {
+    "first_name":   { "object": "Contact", "field": "FirstName", "required": false },
+    "last_name":    { "object": "Contact", "field": "LastName", "required": false },
+    "mobile_phone": { "object": "Contact", "field": "MobilePhone", "required": false },
+    "phone":        { "object": "Contact", "field": "Phone", "required": false },
+    "email":        { "object": "Contact", "field": "Email", "required": false }
+  },
+  "custom_phone_fields": [],
+  "lead_intake": {
+    "lead_source_value": "Sendblue AI",
+    "company_placeholder": "Unknown (Sendblue AI intake)",
+    "owner_routing": {
+      "mode": "default_owner",
+      "$comment": "modes: default_owner | queue | round_robin(unimplemented placeholder). queue_id/owner_id set locally.",
+      "queue_or_owner_id": "UNMAPPED"
+    }
+  },
+  "conflict_rules": {
+    "$comment": "AI may only fill empty fields by default. 'overwrite' allows AI to replace prior AI-written values; never overwrites human-entered values (detected via configured LastModifiedById heuristic or field history when available).",
+    "default": "fill_empty_only",
+    "overrides": { "ai_conversation_summary": "overwrite", "last_inbound_date": "overwrite", "last_outbound_date": "overwrite", "conversation_stage": "overwrite" }
+  },
+  "forbidden_automatic_actions": [
+    "convert_lead",
+    "change_owner",
+    "close_opportunity",
+    "approve_application",
+    "decline_application",
+    "change_underwriting_stage"
+  ]
+}

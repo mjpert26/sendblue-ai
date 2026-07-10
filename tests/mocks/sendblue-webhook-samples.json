@@ -1,0 +1,65 @@
+{
+  "$comment": "Mock Sendblue webhook payloads for manual UAT against SB-01/SB-07 (fictional +1555 numbers, fake handles). POST these to the n8n webhook endpoints with the configured secret header. Field set mirrors the documented receive-webhook payload; unknown org-specific fields pass through untouched.",
+  "inbound_message": {
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": {
+      "accountEmail": "ops@example.com",
+      "content": "Hi, I need funding for my restaurant",
+      "media_url": "",
+      "is_outbound": false,
+      "status": "RECEIVED",
+      "error_code": null,
+      "error_message": null,
+      "message_handle": "mock-handle-0001",
+      "date_sent": "2026-07-10T15:00:00.000Z",
+      "date_updated": "2026-07-10T15:00:00.000Z",
+      "from_number": "+15550100001",
+      "number": "+15550100001",
+      "to_number": "+15550100009",
+      "was_downgraded": false,
+      "service": "iMessage",
+      "opted_out": false
+    }
+  },
+  "inbound_duplicate_retry": {
+    "$comment": "Same message_handle as inbound_message — must be dropped by dedupe, producing no second reply.",
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "content": "Hi, I need funding for my restaurant", "is_outbound": false, "message_handle": "mock-handle-0001", "from_number": "+15550100001", "to_number": "+15550100009", "service": "iMessage" }
+  },
+  "inbound_invalid_secret": {
+    "$comment": "Wrong secret — SB-01 must respond 401 and process nothing.",
+    "headers": { "sb-signing-secret": "wrong-secret" },
+    "body": { "content": "test", "is_outbound": false, "message_handle": "mock-handle-0002", "from_number": "+15550100001", "to_number": "+15550100009" }
+  },
+  "inbound_missing_handle": {
+    "$comment": "No message_handle — SB-01 must drop and log, never reply.",
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "content": "hello?", "is_outbound": false, "from_number": "+15550100001", "to_number": "+15550100009" }
+  },
+  "inbound_media_only": {
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "content": "", "media_url": "https://example.invalid/mock-image.heic", "is_outbound": false, "message_handle": "mock-handle-0003", "from_number": "+15550100001", "to_number": "+15550100009", "service": "iMessage" }
+  },
+  "inbound_opt_out": {
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "content": "STOP", "is_outbound": false, "message_handle": "mock-handle-0004", "from_number": "+15550100001", "to_number": "+15550100009", "service": "SMS" }
+  },
+  "outbound_event_on_inbound_endpoint": {
+    "$comment": "is_outbound=true arriving at the receive endpoint — must be ignored.",
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "content": "our own send echo", "is_outbound": true, "message_handle": "mock-handle-0005", "from_number": "+15550100009", "to_number": "+15550100001" }
+  },
+  "status_delivered": {
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "message_handle": "mock-handle-9001", "status": "DELIVERED", "is_outbound": true, "error_code": null, "error_message": null }
+  },
+  "status_error_auth": {
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "message_handle": "mock-handle-9002", "status": "ERROR", "is_outbound": true, "error_code": "401", "error_message": "authentication failed" }
+  },
+  "status_repeated_callback": {
+    "$comment": "Send twice — second must be a no-op update, never a resend.",
+    "headers": { "sb-signing-secret": "__USE_YOUR_CONFIGURED_SECRET__" },
+    "body": { "message_handle": "mock-handle-9001", "status": "DELIVERED", "is_outbound": true }
+  }
+}

@@ -1,0 +1,26 @@
+# Secrets and credentials — never commit
+.env
+.env.local
+.env.*.local
+credentials.json
+secrets/
+*.pem
+*.key
+*.p12
+
+# Generated discovery output (may contain org-specific metadata)
+config/salesforce-field-map.generated.json
+config/sendblue-inspection.generated.json
+
+# Local test output
+tests/output/
+*.log
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

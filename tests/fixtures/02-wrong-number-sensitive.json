@@ -1,0 +1,15 @@
+{
+  "$comment": "Wrong-number detection + sensitive-data detection/redaction. Fictional data only.",
+  "cases": [
+    { "id": "wrong-number-basic", "kind": "wrong_number", "description": "wrong number detected", "input": { "message": "sorry, wrong number" }, "expected": { "wrongNumber": true } },
+    { "id": "wrong-person", "kind": "wrong_number", "description": "wrong person detected", "input": { "message": "you have the wrong person" }, "expected": { "wrongNumber": true } },
+    { "id": "wrong-number-negative", "kind": "wrong_number", "description": "normal message is not wrong-number", "input": { "message": "I want to apply for business funding" }, "expected": { "wrongNumber": false } },
+    { "id": "ssn-detected", "kind": "sensitive", "description": "SSN sent by customer is detected", "input": { "message": "my ssn is 123-45-6789" }, "expected": { "sensitive": true, "types": ["ssn"] } },
+    { "id": "card-detected", "kind": "sensitive", "description": "card number detected", "input": { "message": "card 4111 1111 1111 1111" }, "expected": { "sensitive": true } },
+    { "id": "banking-credentials-detected", "kind": "sensitive", "description": "bank credentials detected", "input": { "message": "my password: hunter2 for chase" }, "expected": { "sensitive": true, "types": ["credentials"] } },
+    { "id": "routing-detected", "kind": "sensitive", "description": "routing number with context detected", "input": { "message": "routing number 123456789" }, "expected": { "sensitive": true } },
+    { "id": "dob-detected", "kind": "sensitive", "description": "full DOB detected", "input": { "message": "born 04/12/1985" }, "expected": { "sensitive": true, "types": ["dob"] } },
+    { "id": "clean-message", "kind": "sensitive", "description": "ordinary message is not sensitive", "input": { "message": "We make about 40k a month" }, "expected": { "sensitive": false } },
+    { "id": "ssn-redaction", "kind": "redact", "description": "SSN is redacted from logged text", "input": { "message": "ssn 123-45-6789 ok?" }, "expected": { "redacted": "ssn [REDACTED] ok?" } }
+  ]
+}

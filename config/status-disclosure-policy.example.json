@@ -1,0 +1,55 @@
+{
+  "$comment": "What may be disclosed at each verification level. Default-deny: anything not listed as allowed at the caller's level is refused/escalated. See docs/IDENTITY-AND-PRIVACY.md.",
+  "version": "1.0.0",
+  "levels": {
+    "0": {
+      "name": "Unverified",
+      "requires": [],
+      "allowed": [
+        "general_company_information",
+        "general_application_instructions",
+        "start_new_lead_intake",
+        "request_human"
+      ],
+      "denied_examples": [
+        "record_specific_status", "missing_document_details", "owner_information",
+        "offers", "terms", "funding_status"
+      ]
+    },
+    "1": {
+      "name": "Phone match + confirmation",
+      "requires": [
+        "exactly_one_salesforce_match_on_normalized_phone",
+        "confirmed_non_sensitive_factor",
+        "no_conflicting_record_information"
+      ],
+      "confirmation_factors": ["first_name", "business_name", "zip_code"],
+      "confirmation_factors_min": 1,
+      "allowed": [
+        "customer_safe_stage",
+        "application_received_yes_no",
+        "customer_safe_next_step",
+        "human_followup_pending_yes_no",
+        "assigned_rep_first_name"
+      ]
+    },
+    "2": {
+      "name": "Secure verification",
+      "requires": ["level2_provider_success_or_human"],
+      "provider": null,
+      "$provider_comment": "Pluggable. null = not configured; requests requiring level 2 escalate to a human (ASSUMPTIONS A-14). To integrate, set {type:'webhook', url:'...'} and implement per docs/IDENTITY-AND-PRIVACY.md.",
+      "allowed": [
+        "offer_exists_yes_no",
+        "specialist_discussion_scheduling"
+      ],
+      "never_automated": [
+        "specific_offer_details", "specific_rates", "repayment_terms",
+        "sensitive_document_details", "underwriting_notes", "banking_details",
+        "decline_reasons", "personally_identifying_documents"
+      ]
+    }
+  },
+  "default_on_uncertainty": "less_disclosure",
+  "multiple_match_behavior": "clarify_or_escalate_never_guess",
+  "assigned_rep_disclosure": { "first_name_only": true, "requires_level": 1 }
+}

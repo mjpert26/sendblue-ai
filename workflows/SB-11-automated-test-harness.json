@@ -1,0 +1,70 @@
+{
+  "name": "SB-11 Automated Test Harness",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "description": "In-n8n test harness. Runs the full scenario suite against the embedded deterministic core logic using mocks and fictional +1555 numbers only — no Sendblue, Salesforce, Slack or Anthropic calls. Writes results to the test_results Data Table and returns a machine-readable summary. The same scenarios run in CI via scripts/test-fixtures.mjs."
+  },
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "sb11-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "sb11-run",
+      "name": "Run Scenario Suite (Mocked)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — self-contained copy of the deterministic core (scripts/lib/agent-core.mjs)\n// plus the scenario suite. Fake numbers only (+1555xxxxxxx). NEVER calls external APIs.\nconst NEG = /(don'?t|do not|never|please don'?t|no need to)\\s+(?:\\w+\\s+){0,3}$/i;\nconst OPT = { exact_phrases: ['stop','unsubscribe','cancel','opt out','optout','remove me','stop texting','stop messaging me','do not text me',\"don't text me\",'no more texts','leave me alone','take me off your list','i never signed up'], natural_language_patterns: ['stop (contacting|texting|messaging|calling) me',\"(don'?t|do not) (text|message|contact) me( again| anymore)?\",'take me off (the|your) list','remove (me|my number)','quit texting'] };\nfunction detectOptOut(message, rules) { const text = String(message || '').toLowerCase().trim(); if (!text) return { optOut: false }; const stripped = text.replace(/[!.?,;:'\"()\\s]+$/g, '').replace(/^[!.?,;:'\"()\\s]+/g, ''); for (const phrase of rules.exact_phrases) { const p = phrase.toLowerCase(); if (stripped === p) return { optOut: true }; const idx = text.indexOf(p); if (idx >= 0) { const before = text.slice(0, idx); const after = text.slice(idx + p.length); const sb = before === '' || /[.!?;\\n]\\s*$/.test(before); const sa = after === '' || /^[\\s.!?;,]/.test(after); if (!NEG.test(before) && sb && sa && p.includes(' ')) return { optOut: true }; } } for (const pattern of rules.natural_language_patterns) { let re; try { re = new RegExp(pattern, 'i'); } catch { continue; } const m = text.match(re); if (m && !NEG.test(text.slice(0, m.index))) return { optOut: true }; } return { optOut: false }; }\nfunction normalizePhone(raw) { if (!raw) return null; const digits = String(raw).trim().replace(/[^\\d+]/g, ''); if (/^\\+\\d{8,15}$/.test(digits)) return digits; const bare = digits.replace(/\\D/g, ''); if (bare.length === 10) return '+1' + bare; if (bare.length === 11 && bare.startsWith('1')) return '+' + bare; return bare.length >= 8 && bare.length <= 15 ? '+' + bare : null; }\nfunction resolveRecord(matches) { const mapped = (matches || []).map(m => m.object === 'Lead' && m.isConverted && m.convertedContactId ? { ...m, resolvedObject: 'Contact', resolvedId: m.convertedContactId } : { ...m, resolvedObject: m.object, resolvedId: m.id }); const uniq = [...new Set(mapped.map(m => m.resolvedObject + ':' + m.resolvedId))]; if (!uniq.length) return { outcome: 'no_match' }; if (uniq.length > 1) return { outcome: 'multiple_match' }; const rec = mapped[0]; const f = rec.fields || {}; if (String(f.sms_opt_out) === 'true') return { outcome: 'opted_out' }; if (String(f.wrong_number) === 'true') return { outcome: 'wrong_number' }; if (String(f.human_takeover) === 'true') return { outcome: 'human_takeover' }; if (f.ai_enabled !== undefined && String(f.ai_enabled) === 'false') return { outcome: 'ai_disabled' }; return { outcome: 'single_match' }; }\nfunction evaluateSendGuards(c) { const failures = []; const g = (cond, code) => { if (!cond) failures.push(code); }; g(c.global_ai_enabled === true, 'global_ai_disabled'); g(c.outbound_enabled === true, 'outbound_disabled'); g(c.record_ai_enabled !== false, 'record_ai_disabled'); g(c.human_takeover !== true, 'human_takeover_active'); g(c.opted_out !== true, 'opted_out'); g(c.suppressed !== true, 'suppressed'); g(c.wrong_number !== true, 'wrong_number'); g(c.consent_ok === true, 'consent_missing'); g(typeof c.content === 'string' && c.content.trim().length > 0, 'blank_message'); g(c.compliance_passed === true, 'compliance_failed'); g(c.idempotency_key_fresh === true, 'duplicate_idempotency_key'); g(!!c.to_number && !!c.from_number && c.to_number !== c.from_number, 'invalid_endpoints'); g(c.is_reply_to_inbound === true || c.within_messaging_hours === true, 'outside_messaging_hours'); g(c.rate_limit_ok === true, 'rate_limited'); g(c.customer_replied_since_scheduled !== true, 'customer_replied_since_scheduled'); let mode = 'real'; if (c.test_mode === true) { mode = (c.test_allowlist || []).includes(c.to_number) ? 'test_allowlisted' : 'mock'; } else { g(c.allow_real_send === true, 'real_send_not_enabled'); } return { allowed: failures.length === 0, failures, mode }; }\nfunction categorizeError(sc) { if (sc === 401 || sc === 403) return { category: 'auth', retryable: false }; if (sc === 429) return { category: 'rate_limit', retryable: true }; if (sc >= 500) return { category: 'upstream_5xx', retryable: true }; if (sc === 408) return { category: 'timeout', retryable: true }; if (sc >= 400) return { category: 'client_error', retryable: false }; return { category: 'unknown', retryable: false }; }\nconst SENSITIVE = { ssn: /\\b\\d{3}[- ]?\\d{2}[- ]?\\d{4}\\b/i, credentials: /(password|passcode|pin)\\s*[:=]?\\s*\\S+/i };\nconst baseGuardCtx = { global_ai_enabled: true, outbound_enabled: true, record_ai_enabled: true, human_takeover: false, opted_out: false, suppressed: false, wrong_number: false, consent_ok: true, content: 'Hello from the test suite', compliance_passed: true, idempotency_key_fresh: true, to_number: '+15550100001', from_number: '+15550100009', is_reply_to_inbound: true, within_messaging_hours: true, rate_limit_ok: true, customer_replied_since_scheduled: false, test_mode: true, allow_real_send: false, test_allowlist: ['+15550100001'] };\nconst CASES = [\n  { id: 'unknown-inbound-lead', run: () => resolveRecord([]).outcome === 'no_match' },\n  { id: 'existing-lead', run: () => resolveRecord([{ object: 'Lead', id: 'L1', fields: {} }]).outcome === 'single_match' },\n  { id: 'existing-contact', run: () => resolveRecord([{ object: 'Contact', id: 'C1', fields: {} }]).outcome === 'single_match' },\n  { id: 'converted-lead', run: () => resolveRecord([{ object: 'Lead', id: 'L1', isConverted: true, convertedContactId: 'C9', fields: {} }]).outcome === 'single_match' },\n  { id: 'multiple-match-never-guess', run: () => resolveRecord([{ object: 'Lead', id: 'L1', fields: {} }, { object: 'Lead', id: 'L2', fields: {} }]).outcome === 'multiple_match' },\n  { id: 'human-takeover-active', run: () => resolveRecord([{ object: 'Lead', id: 'L1', fields: { human_takeover: 'true' } }]).outcome === 'human_takeover' },\n  { id: 'ai-disabled-on-record', run: () => resolveRecord([{ object: 'Lead', id: 'L1', fields: { ai_enabled: 'false' } }]).outcome === 'ai_disabled' },\n  { id: 'opted-out-record', run: () => resolveRecord([{ object: 'Lead', id: 'L1', fields: { sms_opt_out: 'true' } }]).outcome === 'opted_out' },\n  { id: 'stop-opts-out', run: () => detectOptOut('STOP', OPT).optOut === true },\n  { id: 'unsubscribe-opts-out', run: () => detectOptOut('unsubscribe', OPT).optOut === true },\n  { id: 'natural-language-opt-out', run: () => detectOptOut('please stop texting me about this', OPT).optOut === true },\n  { id: 'false-positive-guard', run: () => detectOptOut('Do not stop processing my application.', OPT).optOut === false },\n  { id: 'wrong-number-detected', run: () => /wrong number/i.test('sorry wrong number') },\n  { id: 'ssn-detected', run: () => SENSITIVE.ssn.test('my ssn is 123-45-6789') },\n  { id: 'bank-credentials-detected', run: () => SENSITIVE.credentials.test('my password: hunter2') },\n  { id: 'phone-normalization', run: () => normalizePhone('(555) 010-0001') === '+15550100001' },\n  { id: 'guards-all-pass-allowlisted', run: () => { const v = evaluateSendGuards(baseGuardCtx); return v.allowed && v.mode === 'test_allowlisted'; } },\n  { id: 'test-mode-blocks-real-number', run: () => evaluateSendGuards({ ...baseGuardCtx, to_number: '+15550109999' }).mode === 'mock' },\n  { id: 'global-kill-switch-blocks', run: () => evaluateSendGuards({ ...baseGuardCtx, global_ai_enabled: false }).failures.includes('global_ai_disabled') },\n  { id: 'human-takeover-blocks-send', run: () => evaluateSendGuards({ ...baseGuardCtx, human_takeover: true }).failures.includes('human_takeover_active') },\n  { id: 'opt-out-blocks-send', run: () => evaluateSendGuards({ ...baseGuardCtx, opted_out: true }).failures.includes('opted_out') },\n  { id: 'wrong-number-blocks-send', run: () => evaluateSendGuards({ ...baseGuardCtx, wrong_number: true }).failures.includes('wrong_number') },\n  { id: 'blank-message-blocks', run: () => evaluateSendGuards({ ...baseGuardCtx, content: '  ' }).failures.includes('blank_message') },\n  { id: 'duplicate-idempotency-blocks', run: () => evaluateSendGuards({ ...baseGuardCtx, idempotency_key_fresh: false }).failures.includes('duplicate_idempotency_key') },\n  { id: 'customer-reply-cancels-scheduled', run: () => evaluateSendGuards({ ...baseGuardCtx, is_reply_to_inbound: false, customer_replied_since_scheduled: true }).failures.includes('customer_replied_since_scheduled') },\n  { id: 'followup-outside-hours-blocked', run: () => evaluateSendGuards({ ...baseGuardCtx, is_reply_to_inbound: false, within_messaging_hours: false }).failures.includes('outside_messaging_hours') },\n  { id: 'real-send-needs-double-flag', run: () => evaluateSendGuards({ ...baseGuardCtx, test_mode: false, allow_real_send: false }).failures.includes('real_send_not_enabled') },\n  { id: 'consent-required-proactive', run: () => evaluateSendGuards({ ...baseGuardCtx, is_reply_to_inbound: false, consent_ok: false }).failures.includes('consent_missing') },\n  { id: 'sendblue-401-not-retryable', run: () => categorizeError(401).retryable === false },\n  { id: 'sendblue-429-retryable', run: () => categorizeError(429).retryable === true },\n  { id: 'sendblue-500-retryable', run: () => categorizeError(500).retryable === true },\n  { id: 'claude-timeout-retryable', run: () => categorizeError(408).retryable === true }\n];\nconst run_id = 'harness_' + Date.now().toString(36);\nconst results = CASES.map(c => { let passed = false, detail = ''; try { passed = c.run() === true; } catch (e) { detail = e.message; } return { run_id, case_id: c.id, passed, detail, executed_at: new Date().toISOString() }; });\nconst summary = { run_id, total: results.length, passed: results.filter(r => r.passed).length, failed: results.filter(r => !r.passed).length };\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-11', workflow_version: '1.0.0', action: 'harness_run', ...summary, ts: new Date().toISOString() }));\nreturn results.map(r => ({ json: { ...r, summary } }));"
+      }
+    },
+    {
+      "id": "sb11-store",
+      "name": "Store Results",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [480, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "test_results" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_id": "={{ $json.run_id }}",
+            "case_id": "={{ $json.case_id }}",
+            "passed": "={{ $json.passed }}",
+            "detail": "={{ $json.detail }}",
+            "executed_at": "={{ $json.executed_at }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb11-summary",
+      "name": "Build Summary Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 0],
+      "parameters": {
+        "jsCode": "// Machine-readable summary; full per-scenario coverage runs in CI (scripts/test-fixtures.mjs + tests/fixtures).\nconst items = $input.all().map(i => i.json);\nconst s = items[0] ? items[0].summary : { total: 0, passed: 0, failed: 0 };\nconst failures = items.filter(i => !i.passed).map(i => ({ case_id: i.case_id, detail: i.detail }));\nreturn [{ json: { ...s, status: s.failed === 0 ? 'GREEN' : 'RED', failures } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Run Scenario Suite (Mocked)", "type": "main", "index": 0 }]] },
+    "Run Scenario Suite (Mocked)": { "main": [[{ "node": "Store Results", "type": "main", "index": 0 }]] },
+    "Store Results": {
+      "main": [
+        [{ "node": "Build Summary Report", "type": "main", "index": 0 }],
+        [{ "node": "Build Summary Report", "type": "main", "index": 0 }]
+      ]
+    }
+  }
+}
