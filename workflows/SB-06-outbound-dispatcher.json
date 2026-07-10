@@ -1,0 +1,293 @@
+{
+  "name": "SB-06 Outbound Dispatcher",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "core-sync": "1.0.0",
+    "description": "THE ONLY workflow allowed to call the Sendblue send endpoint. Every candidate message passes the full guard set (kill switches, per-record state, opt-out, consent, compliance, idempotency, messaging hours, rate limit, test mode) before sending. Stores only technical delivery/idempotency data."
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "nodes": [
+    {
+      "id": "sb06-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "correlation_id", "type": "string" },
+            { "name": "to_number", "type": "string" },
+            { "name": "customer_ref", "type": "string" },
+            { "name": "content", "type": "string" },
+            { "name": "template_id", "type": "string" },
+            { "name": "record_ref", "type": "string" },
+            { "name": "is_reply_to_inbound", "type": "boolean" },
+            { "name": "compliance_prevalidated", "type": "boolean" },
+            { "name": "scheduled_at", "type": "string" },
+            { "name": "record_state_json", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb06-config",
+      "name": "Read Kill Switches + Limits",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [200, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "agent_config" },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "sb06-freshstate",
+      "name": "Salesforce: Fresh Record State",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/query",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ 'SELECT Id' + (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings ? Object.entries(JSON.parse($env.SF_FIELD_MAP_JSON).mappings).filter(([k, s]) => ['ai_enabled','human_takeover','sms_consent','sms_opt_out','wrong_number','last_inbound_date'].includes(k) && s.field !== 'UNMAPPED' && s.object === ($('When Executed by Another Workflow').first().json.record_ref || 'Lead:').split(':')[0]).map(([, s]) => ', ' + s.field).join('') : '') + ' FROM ' + ($('When Executed by Another Workflow').first().json.record_ref || 'Lead:x').split(':')[0] + \" WHERE Id = '\" + ($('When Executed by Another Workflow').first().json.record_ref || ':').split(':')[1] + \"'\" }}" }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "options": { "timeout": 15000, "$comment": "Re-reads suppression state at send time. Skipped/failed => guard evaluation falls back to caller-provided record_state_json, and consent-required sends fail closed." }
+      },
+      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+    },
+    {
+      "id": "sb06-recent-outbound",
+      "name": "Count Recent Outbound (Rate Limit)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [640, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "outbound_idempotency" },
+        "returnAll": false,
+        "limit": 200,
+        "options": { "$comment": "Recent rows are filtered in the guard node by created_at for the per-minute global rate limit." }
+      }
+    },
+    {
+      "id": "sb06-guards",
+      "name": "Evaluate All Send Guards",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 0],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — mirrors evaluateSendGuards/buildIdempotencyKey/withinMessagingHours/validateOutboundContent in scripts/lib/agent-core.mjs.\nconst inp = $('When Executed by Another Workflow').first().json;\nconst cfgRows = (() => { try { return $('Read Kill Switches + Limits').all().map(i => i.json).filter(r => r.key); } catch (e) { return []; } })();\nconst cfg = {}; cfgRows.forEach(r => { cfg[r.key] = r.value; });\nconst compliance = JSON.parse($env.COMPLIANCE_RULES_JSON || '{}');\nconst hours = { timezone: $env.MESSAGING_TIMEZONE || 'America/New_York', start: $env.MESSAGING_HOURS_START || '09:00', end: $env.MESSAGING_HOURS_END || '20:00', days: ['Mon','Tue','Wed','Thu','Fri','Sat'] };\n// --- fresh record state (fail closed on unknown for proactive sends) ---\nlet rec = null;\ntry { const q = $('Salesforce: Fresh Record State').first().json; rec = (q.records || [])[0] || null; } catch (e) { rec = null; }\nif (!rec && inp.record_state_json) { try { rec = JSON.parse(inp.record_state_json); } catch {} }\nconst map = JSON.parse($env.SF_FIELD_MAP_JSON || '{}');\nconst m = map.mappings || {};\nconst obj = (inp.record_ref || 'Lead:').split(':')[0];\nconst fval = (k) => { const s = m[k]; if (!s || s.field === 'UNMAPPED' || s.object !== obj || !rec) return undefined; return rec[s.field]; };\nconst isReply = inp.is_reply_to_inbound === true;\nconst consentMapped = m.sms_consent && m.sms_consent.field !== 'UNMAPPED';\n// Consent: replies to an inbound message are permitted responses; proactive sends require mapped consent=true.\nconst consent_ok = isReply ? true : (consentMapped ? String(fval('sms_consent')) === 'true' : false);\n// Customer replied since scheduled (scheduled/proactive sends only)\nlet repliedSince = false;\nif (inp.scheduled_at) { const li = fval('last_inbound_date'); if (li && new Date(li) > new Date(inp.scheduled_at)) repliedSince = true; }\n// Messaging hours\nfunction withinHours(nowISO, h) { const now = new Date(nowISO); const fmt = new Intl.DateTimeFormat('en-US', { timeZone: h.timezone, hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit' }); const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value])); const hm = `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}`; if (h.days && !h.days.includes(parts.weekday)) return false; return hm >= h.start && hm < h.end; }\n// Rate limit: count idempotency rows created in the last 60s\nlet recentCount = 0;\ntry { const rows = $('Count Recent Outbound (Rate Limit)').all().map(i => i.json); const cutoff = Date.now() - 60000; recentCount = rows.filter(r => r.created_at && new Date(r.created_at).getTime() > cutoff && r.accepted_by_sendblue).length; } catch (e) { recentCount = 0; }\nconst rateLimit = Number(cfg.rate_limit_per_minute || 20);\n// Content compliance (defense in depth even when pre-validated upstream)\nfunction contentOk(content, templateId) { const v = compliance.outbound_validation || {}; const t = String(content || ''); if (!t.trim()) return false; if (v.max_message_length && t.length > v.max_message_length) return false; if (templateId && (v.whitelisted_template_ids || []).includes(templateId)) return true; for (const p of v.forbidden_content_patterns || []) { try { if (new RegExp(p, 'i').test(t)) return false; } catch {} } return true; }\n// Idempotency key\nfunction key(correlationId, to, content) { let h = 5381; const s = `${to}|${content}`; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return `out_${correlationId}_${h.toString(16)}`; }\nconst idempotency_key = key(inp.correlation_id, inp.to_number, inp.content || '');\nconst test_allowlist = String(cfg.test_allowlist_numbers || '').split(',').map(s => s.trim()).filter(Boolean);\nconst ctx = {\n  global_ai_enabled: cfg.global_ai_enabled === 'true',\n  outbound_enabled: cfg.outbound_enabled === 'true',\n  record_ai_enabled: fval('ai_enabled') === undefined ? undefined : String(fval('ai_enabled')) === 'true',\n  human_takeover: String(fval('human_takeover')) === 'true',\n  opted_out: String(fval('sms_opt_out')) === 'true',\n  suppressed: false,\n  wrong_number: String(fval('wrong_number')) === 'true',\n  consent_ok,\n  content: inp.content,\n  compliance_passed: contentOk(inp.content, inp.template_id),\n  idempotency_key_fresh: true,\n  to_number: inp.to_number,\n  from_number: $env.SENDBLUE_FROM_NUMBER,\n  is_reply_to_inbound: isReply,\n  within_messaging_hours: withinHours(new Date().toISOString(), hours),\n  rate_limit_ok: recentCount < rateLimit,\n  customer_replied_since_scheduled: repliedSince,\n  test_mode: cfg.test_mode !== 'false',\n  allow_real_send: $env.ALLOW_REAL_SEND === 'true',\n  test_allowlist\n};\nfunction evaluateSendGuards(c) { const failures = []; const g = (cond, code) => { if (!cond) failures.push(code); };\n  g(c.global_ai_enabled === true, 'global_ai_disabled'); g(c.outbound_enabled === true, 'outbound_disabled');\n  g(c.record_ai_enabled !== false, 'record_ai_disabled'); g(c.human_takeover !== true, 'human_takeover_active');\n  g(c.opted_out !== true, 'opted_out'); g(c.suppressed !== true, 'suppressed'); g(c.wrong_number !== true, 'wrong_number');\n  g(c.consent_ok === true, 'consent_missing'); g(typeof c.content === 'string' && c.content.trim().length > 0, 'blank_message');\n  g(c.compliance_passed === true, 'compliance_failed'); g(c.idempotency_key_fresh === true, 'duplicate_idempotency_key');\n  g(!!c.to_number && !!c.from_number && c.to_number !== c.from_number, 'invalid_endpoints');\n  g(c.is_reply_to_inbound === true || c.within_messaging_hours === true, 'outside_messaging_hours');\n  g(c.rate_limit_ok === true, 'rate_limited'); g(c.customer_replied_since_scheduled !== true, 'customer_replied_since_scheduled');\n  let mode = 'real';\n  if (c.test_mode === true) { mode = (c.test_allowlist || []).includes(c.to_number) ? 'test_allowlisted' : 'mock'; }\n  else { g(c.allow_real_send === true, 'real_send_not_enabled'); }\n  return { allowed: failures.length === 0, failures, mode }; }\nconst verdict = evaluateSendGuards(ctx);\nconsole.log(JSON.stringify({ level: verdict.allowed ? 'info' : 'warn', workflow: 'SB-06', workflow_version: '1.0.0', correlation_id: inp.correlation_id, action: 'guard_evaluation', allowed: verdict.allowed, mode: verdict.mode, failures: verdict.failures, record_ref: inp.record_ref || null, ts: new Date().toISOString() }));\nreturn [{ json: { ...inp, idempotency_key, verdict, send_mode: verdict.mode, seat_id: $env.SENDBLUE_EMMA_SEAT_ID || null, seat_param: $env.SENDBLUE_SEAT_PARAM || 'seat_id' } }];"
+      }
+    },
+    {
+      "id": "sb06-allowed",
+      "name": "Guards Passed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1080, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [{ "leftValue": "={{ $json.verdict.allowed }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }]
+        }
+      }
+    },
+    {
+      "id": "sb06-blocked-log",
+      "name": "Log Blocked Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 180],
+      "parameters": {
+        "jsCode": "return [{ json: { sent: false, blocked: true, failures: $json.verdict.failures, correlation_id: $json.correlation_id } }];"
+      }
+    },
+    {
+      "id": "sb06-claim",
+      "name": "Claim Idempotency Key",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [1300, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "outbound_idempotency" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "idempotency_key": "={{ $json.idempotency_key }}",
+            "correlation_id": "={{ $json.correlation_id }}",
+            "message_handle": "",
+            "delivery_status": "CLAIMED",
+            "accepted_by_sendblue": false,
+            "created_at": "={{ $now.toISO() }}",
+            "updated_at": "={{ $now.toISO() }}",
+            "failure_count": 0
+          }
+        },
+        "options": { "$comment": "idempotency_key column UNIQUE — a duplicate dispatch attempt fails this insert and is dropped on the error branch. Sendblue webhook retries and workflow replays can never double-send." }
+      }
+    },
+    {
+      "id": "sb06-dup-log",
+      "name": "Log Duplicate Send Attempt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 80],
+      "parameters": {
+        "jsCode": "const j = $('Evaluate All Send Guards').first().json;\nconsole.log(JSON.stringify({ level: 'warn', workflow: 'SB-06', correlation_id: j.correlation_id, action: 'duplicate_send_suppressed', idempotency_key: j.idempotency_key, ts: new Date().toISOString() }));\nreturn [{ json: { sent: false, duplicate: true, correlation_id: j.correlation_id } }];"
+      }
+    },
+    {
+      "id": "sb06-mode",
+      "name": "Real Send or Mock?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1520, -100],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [{ "leftValue": "={{ $('Evaluate All Send Guards').first().json.send_mode }}", "rightValue": "mock", "operator": { "type": "string", "operation": "notEquals" } }]
+        }
+      }
+    },
+    {
+      "id": "sb06-send",
+      "name": "Sendblue: Send Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, -180],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/send-message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const j = $('Evaluate All Send Guards').first().json; const body = { number: j.to_number, content: j.content, from_number: $env.SENDBLUE_FROM_NUMBER, status_callback: ($env.N8N_WEBHOOK_BASE_URL || '') + '/webhook/sendblue/status' }; if (j.seat_id) body[j.seat_param] = j.seat_id; return JSON.stringify(body); })() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": { "timeout": 20000, "$comment": "seat param name configurable — ASSUMPTIONS A-05" }
+      },
+      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+    },
+    {
+      "id": "sb06-mock",
+      "name": "Mock Send (TEST_MODE)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1740, 20],
+      "parameters": {
+        "jsCode": "// test_mode + recipient not on test_allowlist => never touches Sendblue.\nconst j = $('Evaluate All Send Guards').first().json;\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-06', correlation_id: j.correlation_id, action: 'mock_send', template_id: j.template_id || null, record_ref: j.record_ref || null, content_length: (j.content || '').length, ts: new Date().toISOString() }));\nreturn [{ json: { status: 'MOCKED', message_handle: 'mock_' + j.idempotency_key, mocked: true } }];"
+      }
+    },
+    {
+      "id": "sb06-record",
+      "name": "Record Send Outcome",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [1960, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "outbound_idempotency" },
+        "filters": {
+          "conditions": [{ "keyName": "idempotency_key", "condition": "eq", "keyValue": "={{ $('Evaluate All Send Guards').first().json.idempotency_key }}" }]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_handle": "={{ $json.message_handle || ($json.body ? $json.body.message_handle : '') || '' }}",
+            "delivery_status": "={{ $json.status || ($json.body ? $json.body.status : '') || 'UNKNOWN' }}",
+            "accepted_by_sendblue": "={{ !!($json.message_handle || ($json.body && $json.body.message_handle)) }}",
+            "updated_at": "={{ $now.toISO() }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb06-lastout",
+      "name": "Salesforce: Stamp Last Outbound",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2180, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/sobjects/{{ ($('Evaluate All Send Guards').first().json.record_ref || 'Lead:').split(':')[0] }}/{{ ($('Evaluate All Send Guards').first().json.record_ref || ':').split(':')[1] }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const obj = ($('Evaluate All Send Guards').first().json.record_ref || 'Lead:').split(':')[0]; const s = m.last_outbound_date; if (!s || s.field === 'UNMAPPED' || s.object !== obj) return JSON.stringify({}); return JSON.stringify({ [s.field]: new Date().toISOString() }); })() }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "options": { "timeout": 15000, "$comment": "No-op when record_ref or last_outbound_date mapping absent." }
+      },
+      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": { "main": [[{ "node": "Read Kill Switches + Limits", "type": "main", "index": 0 }]] },
+    "Read Kill Switches + Limits": {
+      "main": [
+        [{ "node": "Salesforce: Fresh Record State", "type": "main", "index": 0 }],
+        [{ "node": "Salesforce: Fresh Record State", "type": "main", "index": 0 }]
+      ]
+    },
+    "Salesforce: Fresh Record State": {
+      "main": [
+        [{ "node": "Count Recent Outbound (Rate Limit)", "type": "main", "index": 0 }],
+        [{ "node": "Count Recent Outbound (Rate Limit)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Count Recent Outbound (Rate Limit)": {
+      "main": [
+        [{ "node": "Evaluate All Send Guards", "type": "main", "index": 0 }],
+        [{ "node": "Evaluate All Send Guards", "type": "main", "index": 0 }]
+      ]
+    },
+    "Evaluate All Send Guards": { "main": [[{ "node": "Guards Passed?", "type": "main", "index": 0 }]] },
+    "Guards Passed?": {
+      "main": [
+        [{ "node": "Claim Idempotency Key", "type": "main", "index": 0 }],
+        [{ "node": "Log Blocked Send", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claim Idempotency Key": {
+      "main": [
+        [{ "node": "Real Send or Mock?", "type": "main", "index": 0 }],
+        [{ "node": "Log Duplicate Send Attempt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Real Send or Mock?": {
+      "main": [
+        [{ "node": "Sendblue: Send Message", "type": "main", "index": 0 }],
+        [{ "node": "Mock Send (TEST_MODE)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Sendblue: Send Message": {
+      "main": [
+        [{ "node": "Record Send Outcome", "type": "main", "index": 0 }],
+        [{ "node": "Record Send Outcome", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mock Send (TEST_MODE)": { "main": [[{ "node": "Record Send Outcome", "type": "main", "index": 0 }]] },
+    "Record Send Outcome": {
+      "main": [
+        [{ "node": "Salesforce: Stamp Last Outbound", "type": "main", "index": 0 }],
+        [{ "node": "Salesforce: Stamp Last Outbound", "type": "main", "index": 0 }]
+      ]
+    }
+  }
+}

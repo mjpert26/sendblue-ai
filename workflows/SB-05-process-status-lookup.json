@@ -1,0 +1,145 @@
+{
+  "name": "SB-05 Process Status Lookup",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "description": "Deterministic record-status responses. Reads the mapped Salesforce value, maps it to an approved customer-safe stage, enforces verification level, and answers with approved templates only. The model never invents status. Ambiguity escalates."
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "nodes": [
+    {
+      "id": "sb05-trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "correlation_id", "type": "string" },
+            { "name": "customer_number", "type": "string" },
+            { "name": "customer_ref", "type": "string" },
+            { "name": "inbound_content", "type": "string" },
+            { "name": "resolution", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb05-config",
+      "name": "Read Kill Switches",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [200, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "agent_config" },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "sb05-verify",
+      "name": "Verification + Stage Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 0],
+      "parameters": {
+        "jsCode": "// Deterministic status flow. Level-1 verification: exactly one record match PLUS a\n// confirmed non-sensitive factor from the current message (first name / business name / ZIP).\n// Level-2 provider unconfigured => escalate (ASSUMPTIONS A-14). Default = less disclosure.\nconst inp = $('When Executed by Another Workflow').first().json;\nconst rows = $input.all().map(i => i.json).filter(r => r.key);\nconst cfg = {}; rows.forEach(r => { cfg[r.key] = r.value; });\nconst resolution = JSON.parse(inp.resolution || '{}');\nconst statusMap = JSON.parse($env.STATUS_MAP_JSON || '{\"stages\":[]}');\nconst policy = JSON.parse($env.DISCLOSURE_POLICY_JSON || '{}');\nconst templates = JSON.parse($env.FALLBACK_MESSAGES_JSON || '{}').templates || {};\nconst text = (inp.inbound_content || '').toLowerCase();\nlet route, content = null, templateId = null;\nif (cfg.status_lookup_enabled !== 'true' || cfg.global_ai_enabled !== 'true') { route = 'disabled'; }\nelse if (resolution.outcome === 'multiple_match') { route = 'escalate'; content = templates.ambiguous_record; templateId = 'ambiguous_record'; }\nelse if (resolution.outcome !== 'single_match') { route = 'unverified'; content = templates.identity_confirmation_failed; templateId = 'identity_confirmation_failed'; }\nelse {\n  const s = resolution.sanitized || {};\n  // Confirmation factor check against the CURRENT message (deterministic containment of a known factor value).\n  const norm = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9 ]/g, '');\n  const factors = (policy.levels && policy.levels['1'] && policy.levels['1'].confirmation_factors) || ['first_name', 'business_name', 'zip_code'];\n  const confirmed = factors.some(f => { const v = norm(s[f]); return v && v.length >= 3 && norm(text).includes(v); });\n  if (!confirmed) { route = 'need_confirmation'; content = templates.identity_confirmation_request; templateId = 'identity_confirmation_request'; }\n  else {\n    // Level 1 achieved. Map internal value -> customer-safe stage.\n    const appSel = resolution.application_selection || { outcome: 'none' };\n    let obj, field, value;\n    if (appSel.outcome === 'selected' && appSel.application && appSel.application.stage) { obj = 'Opportunity'; field = 'StageName'; value = appSel.application.stage; }\n    else if (appSel.outcome === 'ambiguous') { route = 'escalate'; content = templates.ambiguous_record; templateId = 'ambiguous_record'; }\n    else { obj = 'Lead'; field = 'Status'; value = s.lead_status; }\n    if (!route) {\n      const hit = (statusMap.stages || []).find(st => st.active && st.internal_object === obj && st.internal_field === field && (st.internal_values || []).includes(String(value)));\n      if (!hit) { route = 'escalate'; content = templates.verification_escalation; templateId = 'verification_escalation'; }\n      else if (hit.verification_level >= 2) {\n        // Level 2 required — provider pluggable, unconfigured => human (A-14).\n        route = 'escalate'; content = templates.verification_escalation; templateId = 'verification_escalation';\n      } else if (hit.human_escalation_required) { route = 'escalate_with_status'; content = (templates.status_response || '{status_wording} {next_step}').replace('{status_wording}', hit.customer_wording || '').replace('{next_step}', 'A specialist will follow up with the details.'); templateId = 'status_response'; }\n      else { route = 'answer'; content = (templates.status_response || '{status_wording} {next_step}').replace('{status_wording}', hit.customer_wording || '').replace('{next_step}', hit.next_step || ''); templateId = 'status_response'; }\n    }\n  }\n}\nconst escalate = ['escalate', 'escalate_with_status'].includes(route);\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-05', workflow_version: '1.0.0', correlation_id: inp.correlation_id, action: 'status_lookup', route, record_ref: resolution.sanitized ? resolution.sanitized.record_ref : null, ts: new Date().toISOString() }));\nreturn [{ json: { correlation_id: inp.correlation_id, customer_number: inp.customer_number, customer_ref: inp.customer_ref, record_ref: resolution.sanitized ? resolution.sanitized.record_ref : null, route, content: content ? content.trim() : null, template_id: templateId, escalate, resolution: inp.resolution } }];"
+      }
+    },
+    {
+      "id": "sb05-has-reply",
+      "name": "Has Reply Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [{ "leftValue": "={{ $json.content }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }]
+        }
+      }
+    },
+    {
+      "id": "sb05-dispatch",
+      "name": "Dispatch Status Reply via SB-06",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [860, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-06 Outbound Dispatcher" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "correlation_id": "={{ $json.correlation_id }}",
+            "to_number": "={{ $json.customer_number }}",
+            "customer_ref": "={{ $json.customer_ref }}",
+            "content": "={{ $json.content }}",
+            "template_id": "={{ $json.template_id }}",
+            "record_ref": "={{ $json.record_ref }}",
+            "is_reply_to_inbound": "={{ true }}",
+            "compliance_prevalidated": "={{ true }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb05-escalate-if",
+      "name": "Escalation Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [860, 120],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [{ "leftValue": "={{ $json.escalate }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }]
+        }
+      }
+    },
+    {
+      "id": "sb05-handoff",
+      "name": "Execute SB-09 Handoff",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1080, 120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-09 Human Handoff and Resume" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mode": "handoff",
+            "correlation_id": "={{ $json.correlation_id }}",
+            "customer_number": "={{ $json.customer_number }}",
+            "customer_ref": "={{ $json.customer_ref }}",
+            "handoff_reason": "={{ 'status_lookup_' + $json.route }}",
+            "resolution": "={{ $json.resolution }}",
+            "recent_history": "={{ JSON.stringify([]) }}"
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": { "main": [[{ "node": "Read Kill Switches", "type": "main", "index": 0 }]] },
+    "Read Kill Switches": {
+      "main": [
+        [{ "node": "Verification + Stage Gate", "type": "main", "index": 0 }],
+        [{ "node": "Verification + Stage Gate", "type": "main", "index": 0 }]
+      ]
+    },
+    "Verification + Stage Gate": { "main": [[{ "node": "Has Reply Content?", "type": "main", "index": 0 }]] },
+    "Has Reply Content?": {
+      "main": [
+        [{ "node": "Dispatch Status Reply via SB-06", "type": "main", "index": 0 }, { "node": "Escalation Needed?", "type": "main", "index": 0 }],
+        [{ "node": "Escalation Needed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dispatch Status Reply via SB-06": { "main": [[], []] },
+    "Escalation Needed?": { "main": [[{ "node": "Execute SB-09 Handoff", "type": "main", "index": 0 }], []] },
+    "Execute SB-09 Handoff": { "main": [[], []] }
+  }
+}

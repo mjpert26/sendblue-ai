@@ -1,0 +1,366 @@
+{
+  "name": "SB-01 Inbound Webhook Router",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "core-sync": "1.0.0",
+    "description": "Receives Sendblue receive-webhook events. Validates the signing secret, acknowledges fast, normalizes + dedupes, runs deterministic opt-out/wrong-number detection BEFORE any model call, checks the global kill switch and per-record state, acquires a contact lock, then hands to SB-03/SB-04."
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "nodes": [
+    {
+      "id": "sb01-webhook",
+      "name": "Sendblue Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sendblue/inbound",
+        "responseMode": "responseNode",
+        "options": { "rawBody": false }
+      }
+    },
+    {
+      "id": "sb01-verify",
+      "name": "Verify Signing Secret",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — secret comparison; header name configurable (ASSUMPTIONS A-03).\nconst headerName = ($env.SENDBLUE_WEBHOOK_SECRET_HEADER || 'sb-signing-secret').toLowerCase();\nconst expected = $env.SENDBLUE_WEBHOOK_SECRET || '';\nconst headers = $input.first().json.headers || {};\nconst got = headers[headerName] || headers[headerName.toUpperCase()] || '';\n// constant-time-ish comparison\nlet ok = expected.length > 0 && got.length === expected.length;\nif (ok) { let diff = 0; for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ got.charCodeAt(i); ok = diff === 0; }\nreturn [{ json: { ...$input.first().json, secret_valid: ok } }];"
+      }
+    },
+    {
+      "id": "sb01-secret-ok",
+      "name": "Secret Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [400, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.secret_valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb01-reject",
+      "name": "Respond 401 Invalid Secret",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [600, 160],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"invalid signing secret\" } }}",
+        "options": { "responseCode": 401 }
+      }
+    },
+    {
+      "id": "sb01-ack",
+      "name": "Respond 200 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [600, -120],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"received\": true } }}",
+        "options": { "responseCode": 200 }
+      }
+    },
+    {
+      "id": "sb01-normalize",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, -120],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — mirrors normalizePhone/phoneRef in scripts/lib/agent-core.mjs.\nfunction normalizePhone(raw, defaultCountry = 'US') {\n  if (raw === null || raw === undefined) return null;\n  const s = String(raw).trim(); if (!s) return null;\n  const digits = s.replace(/[^\\d+]/g, '');\n  if (/^\\+\\d{8,15}$/.test(digits)) return digits;\n  const bare = digits.replace(/\\D/g, '');\n  if (defaultCountry === 'US') { if (bare.length === 10) return `+1${bare}`; if (bare.length === 11 && bare.startsWith('1')) return `+${bare}`; }\n  if (bare.length >= 8 && bare.length <= 15) return `+${bare}`;\n  return null;\n}\nfunction phoneRef(e164) { if (!e164) return null; let h = 5381; for (let i = 0; i < e164.length; i++) h = ((h << 5) + h + e164.charCodeAt(i)) >>> 0; return `ph_${h.toString(16)}${e164.slice(-2)}`; }\nconst body = $json.body || $json;\n// Preserve documented Sendblue receive-webhook fields; unknown fields pass through under raw.\nconst isOutbound = body.is_outbound === true || String(body.is_outbound) === 'true';\nconst msg = {\n  message_handle: body.message_handle || null,\n  content: body.content ?? '',\n  media_url: body.media_url || null,\n  is_outbound: isOutbound,\n  service: body.service || null,\n  status: body.status || null,\n  from_number: normalizePhone(body.from_number || body.number),\n  to_number: normalizePhone(body.to_number),\n  sendblue_line: normalizePhone(body.to_number) || null,\n  group_id: body.group_id || null,\n  participants: body.participants || null,\n  date_sent: body.date_sent || body.date_created || null,\n  opted_out: body.opted_out === true,\n  was_downgraded: body.was_downgraded ?? null\n};\nconst correlation_id = `emma_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;\nconst customer_number = msg.is_outbound ? msg.to_number : msg.from_number;\nreturn [{ json: {\n  correlation_id,\n  workflow: 'SB-01', workflow_version: '1.0.0',\n  message: msg,\n  customer_number,\n  customer_ref: phoneRef(customer_number),\n  has_media: !!msg.media_url,\n  drop: msg.is_outbound ? 'outbound_event_on_inbound_endpoint' : (!msg.message_handle ? 'missing_message_handle' : (!customer_number ? 'unparseable_number' : null))\n} }];"
+      }
+    },
+    {
+      "id": "sb01-droppable",
+      "name": "Droppable Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, -120],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "leftValue": "={{ $json.drop }}", "rightValue": "", "operator": { "type": "string", "operation": "empty", "singleValue": true } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb01-drop-log",
+      "name": "Log Dropped Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 40],
+      "parameters": {
+        "jsCode": "// Sanitized structured log; no message content.\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-01', correlation_id: $json.correlation_id, action: 'drop_event', reason: $json.drop, message_handle: $json.message?.message_handle ?? null, ts: new Date().toISOString() }));\nreturn [{ json: { dropped: true, reason: $json.drop } }];"
+      }
+    },
+    {
+      "id": "sb01-dedupe-insert",
+      "name": "Dedupe: Claim Message Handle",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [1200, -120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "processed_messages" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_handle": "={{ $json.message.message_handle }}",
+            "correlation_id": "={{ $json.correlation_id }}",
+            "normalized_phone_hash": "={{ $json.customer_ref }}",
+            "processed_at": "={{ $now.toISO() }}",
+            "outcome": "processing"
+          }
+        },
+        "options": { "$comment": "message_handle column must be UNIQUE so a duplicate webhook retry fails this insert and routes to the duplicate branch." }
+      }
+    },
+    {
+      "id": "sb01-dup-log",
+      "name": "Log Duplicate Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 40],
+      "parameters": {
+        "jsCode": "const src = $('Normalize Payload').first().json;\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-01', correlation_id: src.correlation_id, action: 'duplicate_webhook_ignored', message_handle: src.message.message_handle, ts: new Date().toISOString() }));\nreturn [{ json: { dropped: true, reason: 'duplicate_message_handle' } }];"
+      }
+    },
+    {
+      "id": "sb01-config",
+      "name": "Read Kill Switches",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [1420, -120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "agent_config" },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "sb01-gate",
+      "name": "Deterministic Pre-Model Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, -120],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — mirrors detectOptOut/detectWrongNumber/detectSensitive in scripts/lib/agent-core.mjs.\n// Runs BEFORE any Claude call. Fail-safe: config unreadable => treat global_ai_enabled=false.\nconst src = $('Normalize Payload').first().json;\nconst rows = $input.all().map(i => i.json).filter(r => r.key);\nconst cfg = {}; rows.forEach(r => { cfg[r.key] = r.value; });\nconst globalOn = cfg.global_ai_enabled === 'true';\nconst OPT_OUT_RULES = { exact_phrases: ['stop','unsubscribe','cancel','opt out','optout','remove me','stop texting','stop messaging me','do not text me',\"don't text me\",'no more texts','leave me alone','take me off your list','i never signed up'], natural_language_patterns: ['stop (contacting|texting|messaging|calling) me',\"(don'?t|do not) (text|message|contact) me( again| anymore)?\",'take me off (the|your) list','remove (me|my number)','quit texting'] };\nconst WRONG_RULES = { patterns: ['wrong number','wrong person','you have the wrong',\"who is this\\\\? i never\",\"i'?m not [a-z]+, wrong\"] };\nconst SENSITIVE = { ssn: '\\\\b\\\\d{3}[- ]?\\\\d{2}[- ]?\\\\d{4}\\\\b', card_number: '\\\\b(?:\\\\d[ -]*?){13,19}\\\\b', routing_number_context: '(routing|aba)[^\\\\d]{0,20}\\\\d{9}\\\\b', account_number_context: '(account|acct)[^\\\\d]{0,20}\\\\d{6,17}\\\\b', credentials: '(password|passcode|pin)\\\\s*[:=]?\\\\s*\\\\S+', dob: '\\\\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\\\\d|3[01])[/-](19|20)\\\\d{2}\\\\b' };\nconst NEG = /(don'?t|do not|never|please don'?t|no need to)\\s+(?:\\w+\\s+){0,3}$/i;\nfunction detectOptOut(message, rules) {\n  const text = String(message || '').toLowerCase().trim(); if (!text) return { optOut: false };\n  const stripped = text.replace(/[!.?,;:'\"()\\s]+$/g, '').replace(/^[!.?,;:'\"()\\s]+/g, '');\n  for (const phrase of rules.exact_phrases) { const p = phrase.toLowerCase();\n    if (stripped === p) return { optOut: true, matched: phrase };\n    const idx = text.indexOf(p);\n    if (idx >= 0) { const before = text.slice(0, idx); const after = text.slice(idx + p.length);\n      const sb = before === '' || /[.!?;\\n]\\s*$/.test(before); const sa = after === '' || /^[\\s.!?;,]/.test(after);\n      const singleWord = !p.includes(' ');\n      if (!NEG.test(before) && sb && sa && !singleWord) return { optOut: true, matched: phrase }; } }\n  for (const pattern of rules.natural_language_patterns) { let re; try { re = new RegExp(pattern, 'i'); } catch { continue; }\n    const m = text.match(re); if (m && !NEG.test(text.slice(0, m.index))) return { optOut: true, matched: pattern }; }\n  return { optOut: false };\n}\nfunction detectPatterns(message, patterns) { const t = String(message || '').toLowerCase(); for (const p of patterns) { let re; try { re = new RegExp(p, 'i'); } catch { continue; } if (re.test(t)) return true; } return false; }\nconst content = src.message.content || '';\nconst optOut = src.message.opted_out ? { optOut: true, matched: 'sendblue_opted_out_flag' } : detectOptOut(content, OPT_OUT_RULES);\nconst wrongNumber = detectPatterns(content, WRONG_RULES.patterns);\nconst sensitiveHits = Object.entries(SENSITIVE).filter(([, p]) => { try { return new RegExp(p, 'i').test(content); } catch { return false; } }).map(([k]) => k);\nlet route = 'process';\nif (optOut.optOut) route = 'opt_out'; else if (wrongNumber) route = 'wrong_number'; else if (!globalOn) route = 'kill_switch_off';\nreturn [{ json: { ...src, config: cfg, global_ai_enabled: globalOn, route, opt_out_matched: optOut.matched ?? null, sensitive_types: sensitiveHits, contains_sensitive: sensitiveHits.length > 0 } }];"
+      }
+    },
+    {
+      "id": "sb01-route",
+      "name": "Route Gate Outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1860, -120],
+      "parameters": {
+        "rules": {
+          "values": [
+            { "outputKey": "opt_out", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.route }}", "rightValue": "opt_out", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
+            { "outputKey": "wrong_number", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.route }}", "rightValue": "wrong_number", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
+            { "outputKey": "kill_switch_off", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.route }}", "rightValue": "kill_switch_off", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
+            { "outputKey": "process", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.route }}", "rightValue": "process", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "sb01-optout-flow",
+      "name": "Execute Opt-Out Flow (SB-09 suppress path)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2080, -300],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-09 Human Handoff and Resume" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "mode": "={{ $json.route === 'opt_out' ? 'opt_out' : 'wrong_number' }}",
+            "correlation_id": "={{ $json.correlation_id }}",
+            "customer_number": "={{ $json.customer_number }}",
+            "customer_ref": "={{ $json.customer_ref }}",
+            "message_handle": "={{ $json.message.message_handle }}",
+            "matched_phrase": "={{ $json.opt_out_matched }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb01-kill-log",
+      "name": "Log Kill Switch Suppression",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, -60],
+      "parameters": {
+        "jsCode": "console.log(JSON.stringify({ level: 'warn', workflow: 'SB-01', correlation_id: $json.correlation_id, action: 'suppressed_global_kill_switch', message_handle: $json.message.message_handle, ts: new Date().toISOString() }));\nreturn [{ json: { suppressed: true, reason: 'global_ai_disabled' } }];"
+      }
+    },
+    {
+      "id": "sb01-lock",
+      "name": "Acquire Contact Lock",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [2080, 140],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "contact_locks" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "normalized_phone_hash": "={{ $json.customer_ref }}",
+            "correlation_id": "={{ $json.correlation_id }}",
+            "locked_at": "={{ $now.toISO() }}",
+            "expires_at": "={{ $now.plus({ minutes: 3 }).toISO() }}"
+          }
+        },
+        "options": { "$comment": "normalized_phone_hash UNIQUE => concurrent message for same contact fails insert and is debounced into the running conversation (SB-04 re-reads recent messages)." }
+      }
+    },
+    {
+      "id": "sb01-resolver",
+      "name": "Execute SB-03 Record Resolver",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2300, 140],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-03 Record Resolver and Verification" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "correlation_id": "={{ $json.correlation_id }}",
+            "customer_number": "={{ $json.customer_number }}",
+            "customer_ref": "={{ $json.customer_ref }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb01-orchestrator",
+      "name": "Execute SB-04 Conversation Orchestrator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2520, 140],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-04 Conversation Orchestrator" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "correlation_id": "={{ $('Deterministic Pre-Model Gate').first().json.correlation_id }}",
+            "customer_number": "={{ $('Deterministic Pre-Model Gate').first().json.customer_number }}",
+            "customer_ref": "={{ $('Deterministic Pre-Model Gate').first().json.customer_ref }}",
+            "message_handle": "={{ $('Deterministic Pre-Model Gate').first().json.message.message_handle }}",
+            "inbound_content": "={{ $('Deterministic Pre-Model Gate').first().json.message.content }}",
+            "has_media": "={{ $('Deterministic Pre-Model Gate').first().json.has_media }}",
+            "sensitive_types": "={{ JSON.stringify($('Deterministic Pre-Model Gate').first().json.sensitive_types) }}",
+            "resolution": "={{ JSON.stringify($json) }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb01-unlock",
+      "name": "Release Contact Lock",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [2740, 140],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "contact_locks" },
+        "filters": {
+          "conditions": [
+            { "keyName": "normalized_phone_hash", "condition": "eq", "keyValue": "={{ $('Deterministic Pre-Model Gate').first().json.customer_ref }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sb01-debounce-log",
+      "name": "Log Debounced (Lock Held)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2300, 320],
+      "parameters": {
+        "jsCode": "const src = $('Deterministic Pre-Model Gate').first().json;\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-01', correlation_id: src.correlation_id, action: 'debounced_lock_held', message_handle: src.message.message_handle, ts: new Date().toISOString() }));\nreturn [{ json: { debounced: true } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Sendblue Inbound Webhook": { "main": [[{ "node": "Verify Signing Secret", "type": "main", "index": 0 }]] },
+    "Verify Signing Secret": { "main": [[{ "node": "Secret Valid?", "type": "main", "index": 0 }]] },
+    "Secret Valid?": {
+      "main": [
+        [{ "node": "Respond 200 Accepted", "type": "main", "index": 0 }],
+        [{ "node": "Respond 401 Invalid Secret", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond 200 Accepted": { "main": [[{ "node": "Normalize Payload", "type": "main", "index": 0 }]] },
+    "Normalize Payload": { "main": [[{ "node": "Droppable Event?", "type": "main", "index": 0 }]] },
+    "Droppable Event?": {
+      "main": [
+        [{ "node": "Dedupe: Claim Message Handle", "type": "main", "index": 0 }],
+        [{ "node": "Log Dropped Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Dedupe: Claim Message Handle": {
+      "main": [
+        [{ "node": "Read Kill Switches", "type": "main", "index": 0 }],
+        [{ "node": "Log Duplicate Webhook", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Kill Switches": {
+      "main": [
+        [{ "node": "Deterministic Pre-Model Gate", "type": "main", "index": 0 }],
+        [{ "node": "Deterministic Pre-Model Gate", "type": "main", "index": 0 }]
+      ]
+    },
+    "Deterministic Pre-Model Gate": { "main": [[{ "node": "Route Gate Outcome", "type": "main", "index": 0 }]] },
+    "Route Gate Outcome": {
+      "main": [
+        [{ "node": "Execute Opt-Out Flow (SB-09 suppress path)", "type": "main", "index": 0 }],
+        [{ "node": "Execute Opt-Out Flow (SB-09 suppress path)", "type": "main", "index": 0 }],
+        [{ "node": "Log Kill Switch Suppression", "type": "main", "index": 0 }],
+        [{ "node": "Acquire Contact Lock", "type": "main", "index": 0 }]
+      ]
+    },
+    "Acquire Contact Lock": {
+      "main": [
+        [{ "node": "Execute SB-03 Record Resolver", "type": "main", "index": 0 }],
+        [{ "node": "Log Debounced (Lock Held)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute SB-03 Record Resolver": {
+      "main": [
+        [{ "node": "Execute SB-04 Conversation Orchestrator", "type": "main", "index": 0 }],
+        [{ "node": "Release Contact Lock", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute SB-04 Conversation Orchestrator": {
+      "main": [
+        [{ "node": "Release Contact Lock", "type": "main", "index": 0 }],
+        [{ "node": "Release Contact Lock", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Opt-Out Flow (SB-09 suppress path)": { "main": [[], []] }
+  }
+}

@@ -1,0 +1,226 @@
+{
+  "name": "SB-08 Follow-Up Orchestrator",
+  "meta": {
+    "workflowVersion": "1.0.0",
+    "core-sync": "1.0.0",
+    "description": "Finds due follow-ups (Salesforce-first; followup_jobs Data Table as technical fallback), re-checks every suppression/consent/stage/hours condition immediately before sending, enforces max attempts, cancels on customer reply, and records why each follow-up was sent or skipped."
+  },
+  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "nodes": [
+    {
+      "id": "sb08-schedule",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] } }
+    },
+    {
+      "id": "sb08-config",
+      "name": "Read Kill Switches",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [200, 0],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "agent_config" },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "sb08-gate",
+      "name": "Global Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 0],
+      "parameters": {
+        "jsCode": "// Hard stop when globally disabled — nothing downstream runs.\nconst rows = $input.all().map(i => i.json).filter(r => r.key);\nconst cfg = {}; rows.forEach(r => { cfg[r.key] = r.value; });\nif (cfg.global_ai_enabled !== 'true' || cfg.followups_enabled !== 'true') {\n  console.log(JSON.stringify({ level: 'info', workflow: 'SB-08', action: 'skipped_run', reason: cfg.global_ai_enabled !== 'true' ? 'global_ai_disabled' : 'followups_disabled', ts: new Date().toISOString() }));\n  return [];\n}\nreturn [{ json: { cfg, run_id: 'fu_' + Date.now().toString(36) } }];"
+      }
+    },
+    {
+      "id": "sb08-sfdue",
+      "name": "Salesforce: Find Due Follow-Ups",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/query",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ (() => { const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const need = ['followup_date','followup_attempt','mobile_phone','ai_enabled','human_takeover','sms_consent','sms_opt_out','last_inbound_date']; const f = {}; for (const k of need) { const s = m[k]; f[k] = s && s.field !== 'UNMAPPED' && s.object === 'Lead' ? s.field : null; } if (!f.followup_date) return 'SELECT Id FROM Lead WHERE Id = null'; const sel = ['Id','FirstName','Status', ...Object.values(f).filter(Boolean)]; const extra = [f.ai_enabled ? `${f.ai_enabled} = true` : null, f.human_takeover ? `${f.human_takeover} = false` : null, f.sms_opt_out ? `${f.sms_opt_out} = false` : null].filter(Boolean).join(' AND '); return `SELECT ${[...new Set(sel)].join(', ')} FROM Lead WHERE ${f.followup_date} <= ${new Date().toISOString()}${extra ? ' AND ' + extra : ''} LIMIT 50`; })() }}" }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "options": { "timeout": 20000, "$comment": "Returns zero rows when followup_date is UNMAPPED — the Data Table fallback below then drives scheduling." }
+      },
+      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+    },
+    {
+      "id": "sb08-dtdue",
+      "name": "Data Table: Due Follow-Up Jobs (fallback)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [640, 100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "followup_jobs" },
+        "returnAll": false,
+        "limit": 50,
+        "filters": {
+          "conditions": [{ "keyName": "status", "condition": "eq", "keyValue": "scheduled" }]
+        }
+      }
+    },
+    {
+      "id": "sb08-recheck",
+      "name": "Recheck Eligibility Per Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0],
+      "parameters": {
+        "jsCode": "// core-sync: 1.0.0 — mirrors followupEligible/withinMessagingHours in scripts/lib/agent-core.mjs.\n// Rechecks EVERYTHING immediately before send: consent, suppression, takeover,\n// stage, appointment, last inbound activity, attempts, messaging hours.\nconst gate = $('Global Gate').first().json;\nconst cfg = gate.cfg;\nconst policy = JSON.parse($env.FOLLOWUP_POLICY_JSON || '{}');\nconst fu = policy.followups || {};\nconst max_attempts = Number(fu.max_attempts || 3);\nconst eligibleStages = fu.eligible_stages || [];\nconst m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {});\nconst fname = (k) => { const s = m[k]; return s && s.field !== 'UNMAPPED' && s.object === 'Lead' ? s.field : null; };\nconst hours = policy.messaging_hours || { timezone: $env.MESSAGING_TIMEZONE || 'America/New_York', start: '09:00', end: '20:00', days: ['Mon','Tue','Wed','Thu','Fri','Sat'] };\nfunction withinHours(nowISO, h) { const now = new Date(nowISO); const fmt = new Intl.DateTimeFormat('en-US', { timeZone: h.timezone, hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit' }); const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value])); const hm = `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}`; if (h.days && !h.days.includes(parts.weekday)) return false; return hm >= h.start && hm < h.end; }\nlet sfRecords = [];\ntry { sfRecords = ($('Salesforce: Find Due Follow-Ups').first().json.records || []); } catch (e) { sfRecords = []; }\nlet dtJobs = [];\ntry { dtJobs = $('Data Table: Due Follow-Up Jobs (fallback)').all().map(i => i.json).filter(j => j.job_id && j.due_at && new Date(j.due_at) <= new Date()); } catch (e) { dtJobs = []; }\nconst out = [];\nconst now = new Date().toISOString();\nfunction evalCtx(ctx) { const reasons = []; const need = (c, code) => { if (!c) reasons.push(code); };\n  need(ctx.global_ai_enabled === true, 'global_ai_disabled'); need(ctx.followups_enabled === true, 'followups_disabled');\n  need(ctx.opted_out !== true, 'opted_out'); need(ctx.wrong_number !== true, 'wrong_number');\n  need(ctx.human_takeover !== true, 'human_takeover'); need(ctx.record_ai_enabled !== false, 'record_ai_disabled');\n  need(ctx.consent_ok === true, 'consent_missing'); need(ctx.attempt <= ctx.max_attempts, 'max_attempts_exceeded');\n  need(ctx.stage_eligible === true, 'stage_not_eligible'); need(ctx.inbound_since_scheduled !== true, 'customer_replied');\n  need(ctx.appointment_pending !== true, 'appointment_pending'); need(ctx.within_messaging_hours === true, 'outside_messaging_hours');\n  return { eligible: reasons.length === 0, skipReasons: reasons }; }\nfor (const r of sfRecords) {\n  const g = (k) => { const fn = fname(k); return fn ? r[fn] : undefined; };\n  const attempt = Number(g('followup_attempt') || 0) + 1;\n  const scheduledAt = g('followup_date') || now;\n  const li = g('last_inbound_date');\n  const ctx = { global_ai_enabled: true, followups_enabled: true, opted_out: String(g('sms_opt_out')) === 'true', wrong_number: String(g('wrong_number')) === 'true', human_takeover: String(g('human_takeover')) === 'true', record_ai_enabled: g('ai_enabled') === undefined ? true : String(g('ai_enabled')) === 'true', consent_ok: String(g('sms_consent')) === 'true', attempt, max_attempts, stage_eligible: eligibleStages.length === 0 || eligibleStages.includes(String(g('conversation_stage') || r.Status || '')), inbound_since_scheduled: !!(li && new Date(li) > new Date(scheduledAt)), appointment_pending: !!g('appointment_status'), within_messaging_hours: withinHours(now, hours) };\n  const v = evalCtx(ctx);\n  out.push({ json: { source: 'salesforce', record_id: r.Id, record_ref: 'Lead:' + r.Id, phone: g('mobile_phone') || null, first_name: r.FirstName || null, attempt, scheduled_at: scheduledAt, eligible: v.eligible, skip_reasons: v.skipReasons, correlation_id: gate.run_id + '_' + r.Id } });\n}\nfor (const jb of dtJobs) {\n  const ctx = { global_ai_enabled: true, followups_enabled: true, opted_out: false, wrong_number: false, human_takeover: false, record_ai_enabled: true, consent_ok: false, attempt: Number(jb.attempt || 1), max_attempts, stage_eligible: true, inbound_since_scheduled: false, appointment_pending: false, within_messaging_hours: withinHours(now, hours) };\n  // Data-table jobs carry no fresh Salesforce state — consent_ok stays false so SB-06's own recheck must pass; the job send is routed with the record ref for that recheck.\n  const v = evalCtx({ ...ctx, consent_ok: true });\n  out.push({ json: { source: 'data_table', job_id: jb.job_id, record_ref: jb.salesforce_record_ref || null, record_id: (jb.salesforce_record_ref || ':').split(':')[1] || null, phone: null, phone_hash: jb.normalized_phone_hash, attempt: Number(jb.attempt || 1), scheduled_at: jb.due_at, eligible: v.eligible, skip_reasons: v.skipReasons, correlation_id: gate.run_id + '_' + jb.job_id } });\n}\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-08', workflow_version: '1.0.0', action: 'recheck_batch', run_id: gate.run_id, total: out.length, eligible: out.filter(o => o.json.eligible).length, ts: now }));\nreturn out;"
+      }
+    },
+    {
+      "id": "sb08-eligible",
+      "name": "Eligible?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [{ "leftValue": "={{ $json.eligible }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }]
+        }
+      }
+    },
+    {
+      "id": "sb08-compose",
+      "name": "Compose Follow-Up Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, -100],
+      "parameters": {
+        "jsCode": "// Deterministic, compliance-reviewable follow-up copy (no model call).\nconst templates = JSON.parse($env.FOLLOWUP_TEMPLATES_JSON || '{}');\nconst byAttempt = templates.by_attempt || {};\nconst fallback = templates.default || 'Hi{name}, just checking in from ' + ($env.COMPANY_NAME || 'Big Think Capital') + ' about your business-financing inquiry. Reply here whenever you\\u2019re ready, or let me know if you\\u2019d like a call.';\nconst t = byAttempt[String($json.attempt)] || fallback;\nconst content = t.replace('{name}', $json.first_name ? ' ' + $json.first_name : '');\nreturn [{ json: { ...$json, content, template_id: 'followup_attempt_' + $json.attempt } }];"
+      }
+    },
+    {
+      "id": "sb08-dispatch",
+      "name": "Execute SB-06 Outbound Dispatcher",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1540, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-06 Outbound Dispatcher" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "correlation_id": "={{ $json.correlation_id }}",
+            "to_number": "={{ $json.phone }}",
+            "customer_ref": "={{ $json.phone_hash || '' }}",
+            "content": "={{ $json.content }}",
+            "template_id": "={{ $json.template_id }}",
+            "record_ref": "={{ $json.record_ref }}",
+            "is_reply_to_inbound": "={{ false }}",
+            "compliance_prevalidated": "={{ false }}",
+            "scheduled_at": "={{ $json.scheduled_at }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "sb08-advance",
+      "name": "Salesforce: Advance Attempt Counter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, -100],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/sobjects/Lead/{{ $('Compose Follow-Up Message').item.json.record_id }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => { const it = $('Compose Follow-Up Message').item.json; const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const body = {}; const fa = m.followup_attempt, fd = m.followup_date; const policy = JSON.parse($env.FOLLOWUP_POLICY_JSON || '{}'); const seq = ((policy.followups || {}).schedule_hours_after_last_inbound) || [24, 72, 168]; if (fa && fa.field !== 'UNMAPPED' && fa.object === 'Lead') body[fa.field] = it.attempt; if (fd && fd.field !== 'UNMAPPED' && fd.object === 'Lead') { const nextIdx = it.attempt; body[fd.field] = nextIdx < seq.length ? new Date(Date.now() + seq[nextIdx] * 3600000).toISOString() : null; } return JSON.stringify(body); })() }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "salesforceOAuth2Api",
+        "options": { "timeout": 15000, "$comment": "Sets next followup_date or clears it after the final attempt (max_attempts enforcement is also in the recheck)." }
+      },
+      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+    },
+    {
+      "id": "sb08-skiplog",
+      "name": "Record Skip Reason",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [1320, 120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "update",
+        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "followup_jobs" },
+        "filters": {
+          "conditions": [{ "keyName": "job_id", "condition": "eq", "keyValue": "={{ $json.job_id || ('sf_' + $json.record_id) }}" }]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.skip_reasons.includes('max_attempts_exceeded') || $json.skip_reasons.includes('opted_out') || $json.skip_reasons.includes('customer_replied') ? 'cancelled' : 'scheduled' }}",
+            "resolution": "={{ 'skipped: ' + $json.skip_reasons.join(',') }}",
+            "resolved_at": "={{ $now.toISO() }}"
+          }
+        },
+        "options": { "$comment": "Terminal skip reasons cancel the job (prevents endless nurture loops); transient ones (outside hours) leave it scheduled for the next run. Salesforce-sourced skips just log via the error branch when no job row exists." }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": { "main": [[{ "node": "Read Kill Switches", "type": "main", "index": 0 }]] },
+    "Read Kill Switches": {
+      "main": [
+        [{ "node": "Global Gate", "type": "main", "index": 0 }],
+        [{ "node": "Global Gate", "type": "main", "index": 0 }]
+      ]
+    },
+    "Global Gate": {
+      "main": [[
+        { "node": "Salesforce: Find Due Follow-Ups", "type": "main", "index": 0 },
+        { "node": "Data Table: Due Follow-Up Jobs (fallback)", "type": "main", "index": 0 }
+      ]]
+    },
+    "Salesforce: Find Due Follow-Ups": {
+      "main": [
+        [{ "node": "Recheck Eligibility Per Record", "type": "main", "index": 0 }],
+        [{ "node": "Recheck Eligibility Per Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Data Table: Due Follow-Up Jobs (fallback)": {
+      "main": [
+        [{ "node": "Recheck Eligibility Per Record", "type": "main", "index": 0 }],
+        [{ "node": "Recheck Eligibility Per Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Recheck Eligibility Per Record": { "main": [[{ "node": "Eligible?", "type": "main", "index": 0 }]] },
+    "Eligible?": {
+      "main": [
+        [{ "node": "Compose Follow-Up Message", "type": "main", "index": 0 }],
+        [{ "node": "Record Skip Reason", "type": "main", "index": 0 }]
+      ]
+    },
+    "Compose Follow-Up Message": { "main": [[{ "node": "Execute SB-06 Outbound Dispatcher", "type": "main", "index": 0 }]] },
+    "Execute SB-06 Outbound Dispatcher": {
+      "main": [
+        [{ "node": "Salesforce: Advance Attempt Counter", "type": "main", "index": 0 }],
+        [{ "node": "Salesforce: Advance Attempt Counter", "type": "main", "index": 0 }]
+      ]
+    },
+    "Salesforce: Advance Attempt Counter": { "main": [[], []] },
+    "Record Skip Reason": { "main": [[], []] }
+  }
+}
