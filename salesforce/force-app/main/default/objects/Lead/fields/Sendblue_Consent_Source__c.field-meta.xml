@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Sendblue_Consent_Source__c</fullName>
+    <label>Sendblue Consent Source</label>
+    <type>Text</type>
+    <length>255</length>
+    <required>false</required>
+    <description>Emma AI funding assistant field. Managed by the Sendblue-AI n8n workflows.</description>
+</CustomField>
