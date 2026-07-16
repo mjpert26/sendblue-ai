@@ -226,7 +226,8 @@
           "cachedResultName": "agent_config"
         },
         "returnAll": true
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "sb01-gate",
@@ -499,7 +500,8 @@
             }
           ]
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "sb01-debounce-log",

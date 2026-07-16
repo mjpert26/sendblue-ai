@@ -4,26 +4,59 @@
     "workflowVersion": "1.0.0",
     "description": "Handoff: sets human takeover, stops AI, cancels follow-ups, creates a Salesforce Task, posts a Slack summary, optionally sends one approved transfer message. Also handles deterministic opt-out and wrong-number suppression flows. Resume: authorized webhook trigger only, with full recheck and audit."
   },
-  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter"
+  },
   "nodes": [
     {
       "id": "sb09-trigger",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
         "workflowInputs": {
           "values": [
-            { "name": "mode", "type": "string" },
-            { "name": "correlation_id", "type": "string" },
-            { "name": "customer_number", "type": "string" },
-            { "name": "customer_ref", "type": "string" },
-            { "name": "message_handle", "type": "string" },
-            { "name": "handoff_reason", "type": "string" },
-            { "name": "matched_phrase", "type": "string" },
-            { "name": "resolution", "type": "string" },
-            { "name": "recent_history", "type": "string" }
+            {
+              "name": "mode",
+              "type": "string"
+            },
+            {
+              "name": "correlation_id",
+              "type": "string"
+            },
+            {
+              "name": "customer_number",
+              "type": "string"
+            },
+            {
+              "name": "customer_ref",
+              "type": "string"
+            },
+            {
+              "name": "message_handle",
+              "type": "string"
+            },
+            {
+              "name": "handoff_reason",
+              "type": "string"
+            },
+            {
+              "name": "matched_phrase",
+              "type": "string"
+            },
+            {
+              "name": "resolution",
+              "type": "string"
+            },
+            {
+              "name": "recent_history",
+              "type": "string"
+            }
           ]
         }
       }
@@ -33,7 +66,10 @@
       "name": "Plan Mode Actions",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 0],
+      "position": [
+        220,
+        0
+      ],
       "parameters": {
         "jsCode": "// Modes: handoff | opt_out | wrong_number. Builds the Salesforce update body,\n// urgency, Task subject and the single permitted customer message (if any).\nconst j = $json;\nconst mode = j.mode || 'handoff';\nconst map = JSON.parse($env.SF_FIELD_MAP_JSON || '{}');\nconst m = map.mappings || {};\nconst templates = JSON.parse($env.FALLBACK_MESSAGES_JSON || '{}').templates || {};\nconst handoffRules = JSON.parse($env.HANDOFF_RULES_JSON || '{}');\nlet resolution = {}; try { resolution = JSON.parse(j.resolution || '{}'); } catch {}\nconst recordRef = resolution.record_ref || (resolution.sanitized && resolution.sanitized.record_ref) || null;\nconst recordObj = recordRef ? recordRef.split(':')[0] : null;\nconst recordId = recordRef ? recordRef.split(':')[1] : (resolution.record_id || null);\nconst fset = (body, logical, value) => { const s = m[logical]; if (s && s.field !== 'UNMAPPED' && (!recordObj || s.object === recordObj)) body[s.field] = value; };\nconst sfBody = {};\nlet taskSubject = null, customerMsg = null, templateId = null, urgency = 'normal', slackText = null;\nconst assistant = $env.ASSISTANT_NAME || 'Emma';\nlet history = []; try { history = JSON.parse(j.recent_history || '[]'); } catch {}\nconst historyText = history.slice(-6).map(h => `${h.dir === 'in' ? 'Customer' : assistant}: ${h.content}`).join('\\n');\nif (mode === 'opt_out') {\n  fset(sfBody, 'sms_opt_out', true);\n  fset(sfBody, 'consent_timestamp', new Date().toISOString());\n  fset(sfBody, 'consent_source', 'customer_opt_out:' + (j.matched_phrase || 'detected'));\n  fset(sfBody, 'conversation_stage', 'DO_NOT_CONTACT');\n  customerMsg = templates.opt_out_confirmation || null; templateId = 'opt_out_confirmation';\n  taskSubject = `[${assistant} AI] Customer opted out of messaging`;\n} else if (mode === 'wrong_number') {\n  fset(sfBody, 'wrong_number', true);\n  fset(sfBody, 'conversation_stage', 'WRONG_NUMBER');\n  customerMsg = templates.wrong_number_apology || null; templateId = 'wrong_number_apology';\n  taskSubject = `[${assistant} AI] Wrong number reported — verify phone on record`;\n} else {\n  fset(sfBody, 'human_takeover', true);\n  fset(sfBody, 'handoff_reason', (j.handoff_reason || 'unspecified').slice(0, 250));\n  fset(sfBody, 'conversation_stage', 'HUMAN_HANDOFF');\n  const sendTransfer = (handoffRules.handoff_actions || {}).send_transfer_message !== false;\n  customerMsg = sendTransfer ? (templates.handoff_transfer || null) : null; templateId = 'handoff_transfer';\n  const kw = (handoffRules.urgency_keywords || {});\n  const txt = historyText.toLowerCase();\n  if ((kw.high || []).some(k => txt.includes(k)) || ['complaint', 'fraud_or_identity_theft_report'].includes(j.handoff_reason)) urgency = 'high';\n  else if ((kw.medium || []).some(k => txt.includes(k))) urgency = 'medium';\n  taskSubject = `[${assistant} AI] Handoff: ${(j.handoff_reason || 'customer needs a human').slice(0, 120)}`;\n}\nconst sfLink = recordId ? `${$env.SF_INSTANCE_URL}/lightning/r/${recordObj}/${recordId}/view` : '(no Salesforce record matched)';\nslackText = [`:rotating_light: *${assistant} ${mode === 'handoff' ? 'handoff' : mode.replace('_', ' ')}* (urgency: ${urgency})`,\n  `*Reason:* ${j.handoff_reason || j.matched_phrase || mode}`,\n  `*Record:* ${sfLink}`,\n  `*Correlation:* ${j.correlation_id}`,\n  historyText ? `*Recent conversation:*\\n${historyText.slice(0, 1500)}` : null].filter(Boolean).join('\\n');\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-09', workflow_version: '1.0.0', correlation_id: j.correlation_id, action: 'handoff_' + mode, record_ref: recordRef, urgency, ts: new Date().toISOString() }));\nreturn [{ json: { ...j, mode, sfBody, recordObj, recordId, recordRef, taskSubject, customerMsg, template_id: templateId, urgency, slackText, priority: urgency === 'high' ? 'High' : 'Normal' } }];"
       }
@@ -43,29 +79,53 @@
       "name": "Cancel Pending Follow-Ups",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1,
-      "position": [440, -160],
+      "position": [
+        440,
+        -160
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "operation": "update",
-        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "followup_jobs" },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "followup_jobs"
+        },
         "filters": {
           "conditions": [
-            { "keyName": "normalized_phone_hash", "condition": "eq", "keyValue": "={{ $json.customer_ref }}" },
-            { "keyName": "status", "condition": "eq", "keyValue": "scheduled" }
+            {
+              "keyName": "normalized_phone_hash",
+              "condition": "eq",
+              "keyValue": "={{ $json.customer_ref }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "scheduled"
+            }
           ]
         },
         "columns": {
           "mappingMode": "defineBelow",
-          "value": { "status": "cancelled", "resolution": "={{ $json.mode }}", "resolved_at": "={{ $now.toISO() }}" }
+          "value": {
+            "status": "cancelled",
+            "resolution": "={{ $json.mode }}",
+            "resolved_at": "={{ $now.toISO() }}"
+          }
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "sb09-sfupdate",
       "name": "Salesforce: Set Takeover/Suppression Flags",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [440, 0],
+      "position": [
+        440,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "PATCH",
@@ -75,16 +135,27 @@
         "jsonBody": "={{ JSON.stringify($json.sfBody) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "timeout": 15000, "$comment": "Skipped naturally when recordId is null (unknown caller opt-out is still honored at the Sendblue layer below)." }
+        "options": {
+          "timeout": 15000,
+          "$comment": "Skipped naturally when recordId is null (unknown caller opt-out is still honored at the Sendblue layer below)."
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb09-sboptout",
       "name": "Sendblue: Opt Out Contact",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [440, 160],
+      "position": [
+        440,
+        160
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -94,21 +165,43 @@
         "jsonBody": "={{ JSON.stringify({ number: $json.customer_number, opted_out: true }) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "timeout": 15000, "$comment": "Runs only on the opt_out branch (see IF below feeding this node). Sendblue blocks sends to opted-out numbers at its layer too (ASSUMPTIONS A-08)." }
+        "options": {
+          "timeout": 15000,
+          "$comment": "Runs only on the opt_out branch (see IF below feeding this node). Sendblue blocks sends to opted-out numbers at its layer too (ASSUMPTIONS A-08)."
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb09-optout-if",
       "name": "Is Opt-Out Mode?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [220, 200],
+      "position": [
+        220,
+        200
+      ],
       "parameters": {
         "conditions": {
-          "options": { "typeValidation": "strict" },
+          "options": {
+            "typeValidation": "strict"
+          },
           "combinator": "and",
-          "conditions": [{ "leftValue": "={{ $json.mode }}", "rightValue": "opt_out", "operator": { "type": "string", "operation": "equals" } }]
+          "conditions": [
+            {
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "opt_out",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
         }
       }
     },
@@ -117,7 +210,10 @@
       "name": "Salesforce: Create Task",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 0],
+      "position": [
+        660,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -127,16 +223,27 @@
         "jsonBody": "={{ JSON.stringify(Object.fromEntries(Object.entries({ Subject: $json.taskSubject, Priority: $json.priority, Status: 'Open', Description: ('Correlation: ' + $json.correlation_id + '\\nReason: ' + ($json.handoff_reason || $json.mode) + '\\nUrgency: ' + $json.urgency), WhoId: $json.recordObj === 'Contact' ? $json.recordId : undefined, ActivityDate: new Date().toISOString().slice(0, 10) }).filter(([, v]) => v !== undefined))) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "timeout": 15000, "$comment": "Lead tasks: WhoId accepts Lead ids as well; harmless if org restricts — error branch continues." }
+        "options": {
+          "timeout": 15000,
+          "$comment": "Lead tasks: WhoId accepts Lead ids as well; harmless if org restricts — error branch continues."
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb09-slack",
       "name": "Slack: Handoff Summary",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 0],
+      "position": [
+        880,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -146,21 +253,43 @@
         "jsonBody": "={{ JSON.stringify({ channel: $env.SLACK_HANDOFF_CHANNEL_ID, text: $json.slackText }) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "slackApi",
-        "options": { "timeout": 10000 }
+        "options": {
+          "timeout": 10000
+        }
       },
-      "credentials": { "slackApi": { "id": "__PLACEHOLDER__", "name": "Slack API [placeholder]" } }
+      "credentials": {
+        "slackApi": {
+          "id": "__PLACEHOLDER__",
+          "name": "Slack API [placeholder]"
+        }
+      }
     },
     {
       "id": "sb09-msg-if",
       "name": "Has Customer Message?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1100, 0],
+      "position": [
+        1100,
+        0
+      ],
       "parameters": {
         "conditions": {
-          "options": { "typeValidation": "loose" },
+          "options": {
+            "typeValidation": "loose"
+          },
           "combinator": "and",
-          "conditions": [{ "leftValue": "={{ $json.customerMsg }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty", "singleValue": true } }]
+          "conditions": [
+            {
+              "leftValue": "={{ $json.customerMsg }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ]
         }
       }
     },
@@ -169,10 +298,18 @@
       "name": "Dispatch One Transfer/Confirmation Message via SB-06",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [1320, 0],
+      "position": [
+        1320,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-06 Outbound Dispatcher" },
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "SB-06 Outbound Dispatcher"
+        },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
@@ -194,7 +331,10 @@
       "name": "Resume Webhook (Authorized)",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 460],
+      "position": [
+        0,
+        460
+      ],
       "parameters": {
         "httpMethod": "POST",
         "path": "emma/resume",
@@ -207,7 +347,10 @@
       "name": "Authorize + Recheck",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 460],
+      "position": [
+        220,
+        460
+      ],
       "parameters": {
         "jsCode": "// Resume requires the shared RESUME_AUTH_TOKEN and an operator identity.\n// Rechecks (opt-out, consent, wrong number, global kill switch) run against\n// Salesforce in the next node; this node validates the request itself.\nconst body = $json.body || {};\nconst headers = $json.headers || {};\nconst token = headers['x-resume-token'] || body.token || '';\nconst expected = $env.RESUME_AUTH_TOKEN || '';\nlet ok = expected.length > 0 && token.length === expected.length;\nif (ok) { let d = 0; for (let i = 0; i < expected.length; i++) d |= expected.charCodeAt(i) ^ token.charCodeAt(i); ok = d === 0; }\nif (!ok) return [{ json: { authorized: false } }];\nif (!body.record_ref || !body.resumed_by) return [{ json: { authorized: false, reason: 'record_ref and resumed_by are required' } }];\nreturn [{ json: { authorized: true, record_ref: body.record_ref, recordObj: body.record_ref.split(':')[0], recordId: body.record_ref.split(':')[1], resumed_by: String(body.resumed_by).slice(0, 80), correlation_id: 'resume_' + Date.now().toString(36) } }];"
       }
@@ -217,12 +360,27 @@
       "name": "Authorized?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [440, 460],
+      "position": [
+        440,
+        460
+      ],
       "parameters": {
         "conditions": {
-          "options": { "typeValidation": "strict" },
+          "options": {
+            "typeValidation": "strict"
+          },
           "combinator": "and",
-          "conditions": [{ "leftValue": "={{ $json.authorized }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }]
+          "conditions": [
+            {
+              "leftValue": "={{ $json.authorized }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
         }
       }
     },
@@ -231,15 +389,27 @@
       "name": "Respond 403",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [660, 620],
-      "parameters": { "respondWith": "json", "responseBody": "={{ { \"error\": \"unauthorized\" } }}", "options": { "responseCode": 403 } }
+      "position": [
+        660,
+        620
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"error\": \"unauthorized\" } }}",
+        "options": {
+          "responseCode": 403
+        }
+      }
     },
     {
       "id": "sb09-resume-fetch",
       "name": "Salesforce: Recheck Before Resume",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 460],
+      "position": [
+        660,
+        460
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
@@ -247,21 +417,34 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "q", "value": "={{ (() => { const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const obj = $json.recordObj; const fields = ['sms_opt_out','sms_consent','wrong_number','human_takeover'].map(k => m[k]).filter(s => s && s.field !== 'UNMAPPED' && s.object === obj).map(s => s.field); return `SELECT Id${fields.length ? ', ' + fields.join(', ') : ''} FROM ${obj} WHERE Id = '${$json.recordId}'`; })() }}" }
+            {
+              "name": "q",
+              "value": "={{ (() => { const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const obj = $json.recordObj; const fields = ['sms_opt_out','sms_consent','wrong_number','human_takeover'].map(k => m[k]).filter(s => s && s.field !== 'UNMAPPED' && s.object === obj).map(s => s.field); return `SELECT Id${fields.length ? ', ' + fields.join(', ') : ''} FROM ${obj} WHERE Id = '${$json.recordId}'`; })() }}"
+            }
           ]
         },
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "timeout": 15000 }
+        "options": {
+          "timeout": 15000
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb09-resume-apply",
       "name": "Clear Takeover + Audit",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [880, 460],
+      "position": [
+        880,
+        460
+      ],
       "parameters": {
         "jsCode": "// Refuses resume when opt-out / wrong-number / missing-consent persists.\nconst auth = $('Authorize + Recheck').first().json;\nconst m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {});\nconst fname = (k) => { const s = m[k]; return s && s.field !== 'UNMAPPED' && s.object === auth.recordObj ? s.field : null; };\nlet rec = null;\ntry { rec = ($('Salesforce: Recheck Before Resume').first().json.records || [])[0] || null; } catch {}\nif (!rec) return [{ json: { resumed: false, reason: 'record_not_found_or_query_failed', http: 409 } }];\nconst val = (k) => { const fn = fname(k); return fn ? String(rec[fn]) === 'true' : null; };\nif (val('sms_opt_out') === true) return [{ json: { resumed: false, reason: 'record is opted out — resume refused', http: 409 } }];\nif (val('wrong_number') === true) return [{ json: { resumed: false, reason: 'record marked wrong number — resume refused', http: 409 } }];\nif (val('sms_consent') === false) return [{ json: { resumed: false, reason: 'no messaging consent on record — resume refused', http: 409 } }];\nconst body = {};\nconst ht = fname('human_takeover'); if (ht) body[ht] = false;\nconst hr = fname('handoff_reason'); if (hr) body[hr] = `resumed by ${auth.resumed_by} at ${new Date().toISOString()}`;\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-09', correlation_id: auth.correlation_id, action: 'resume_authorized', record_ref: auth.record_ref, resumed_by: auth.resumed_by, ts: new Date().toISOString() }));\nreturn [{ json: { resumed: true, sfBody: body, recordObj: auth.recordObj, recordId: auth.recordId, http: 200, resumed_by: auth.resumed_by } }];"
       }
@@ -271,7 +454,10 @@
       "name": "Salesforce: Clear Human Takeover",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 460],
+      "position": [
+        1100,
+        460
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "PATCH",
@@ -281,20 +467,32 @@
         "jsonBody": "={{ JSON.stringify($json.sfBody || {}) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "timeout": 15000 }
+        "options": {
+          "timeout": 15000
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb09-resume-respond",
       "name": "Respond Resume Result",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1320, 460],
+      "position": [
+        1320,
+        460
+      ],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ resumed: $('Clear Takeover + Audit').first().json.resumed, reason: $('Clear Takeover + Audit').first().json.reason || null }) }}",
-        "options": { "responseCode": "={{ $('Clear Takeover + Audit').first().json.http }}" }
+        "options": {
+          "responseCode": "={{ $('Clear Takeover + Audit').first().json.http }}"
+        }
       }
     },
     {
@@ -302,62 +500,228 @@
       "name": "Note: Kill Switch",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [0, 200],
+      "position": [
+        0,
+        200
+      ],
       "parameters": {},
       "notes": "Suppression modes here run even when global_ai_enabled=false (opt-outs must always be honored). The one optional outbound confirmation still passes through SB-06, which checks global_ai_enabled/outbound_enabled before sending."
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Plan Mode Actions", "type": "main", "index": 0 }]] },
-    "Plan Mode Actions": {
-      "main": [[
-        { "node": "Cancel Pending Follow-Ups", "type": "main", "index": 0 },
-        { "node": "Salesforce: Set Takeover/Suppression Flags", "type": "main", "index": 0 },
-        { "node": "Is Opt-Out Mode?", "type": "main", "index": 0 }
-      ]]
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Plan Mode Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Is Opt-Out Mode?": { "main": [[{ "node": "Sendblue: Opt Out Contact", "type": "main", "index": 0 }], []] },
-    "Sendblue: Opt Out Contact": { "main": [[], []] },
-    "Cancel Pending Follow-Ups": { "main": [[], []] },
+    "Plan Mode Actions": {
+      "main": [
+        [
+          {
+            "node": "Cancel Pending Follow-Ups",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Salesforce: Set Takeover/Suppression Flags",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Opt-Out Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Opt-Out Mode?": {
+      "main": [
+        [
+          {
+            "node": "Sendblue: Opt Out Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Sendblue: Opt Out Contact": {
+      "main": [
+        [],
+        []
+      ]
+    },
+    "Cancel Pending Follow-Ups": {
+      "main": [
+        [],
+        []
+      ]
+    },
     "Salesforce: Set Takeover/Suppression Flags": {
       "main": [
-        [{ "node": "Salesforce: Create Task", "type": "main", "index": 0 }],
-        [{ "node": "Salesforce: Create Task", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Salesforce: Create Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Salesforce: Create Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Salesforce: Create Task": {
       "main": [
-        [{ "node": "Slack: Handoff Summary", "type": "main", "index": 0 }],
-        [{ "node": "Slack: Handoff Summary", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Slack: Handoff Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack: Handoff Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Slack: Handoff Summary": {
       "main": [
-        [{ "node": "Has Customer Message?", "type": "main", "index": 0 }],
-        [{ "node": "Has Customer Message?", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Has Customer Message?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Customer Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Has Customer Message?": { "main": [[{ "node": "Dispatch One Transfer/Confirmation Message via SB-06", "type": "main", "index": 0 }], []] },
-    "Dispatch One Transfer/Confirmation Message via SB-06": { "main": [[], []] },
-    "Resume Webhook (Authorized)": { "main": [[{ "node": "Authorize + Recheck", "type": "main", "index": 0 }]] },
-    "Authorize + Recheck": { "main": [[{ "node": "Authorized?", "type": "main", "index": 0 }]] },
+    "Has Customer Message?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch One Transfer/Confirmation Message via SB-06",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Dispatch One Transfer/Confirmation Message via SB-06": {
+      "main": [
+        [],
+        []
+      ]
+    },
+    "Resume Webhook (Authorized)": {
+      "main": [
+        [
+          {
+            "node": "Authorize + Recheck",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authorize + Recheck": {
+      "main": [
+        [
+          {
+            "node": "Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Authorized?": {
       "main": [
-        [{ "node": "Salesforce: Recheck Before Resume", "type": "main", "index": 0 }],
-        [{ "node": "Respond 403", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Salesforce: Recheck Before Resume",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 403",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Salesforce: Recheck Before Resume": {
       "main": [
-        [{ "node": "Clear Takeover + Audit", "type": "main", "index": 0 }],
-        [{ "node": "Clear Takeover + Audit", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Clear Takeover + Audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clear Takeover + Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Clear Takeover + Audit": { "main": [[{ "node": "Salesforce: Clear Human Takeover", "type": "main", "index": 0 }]] },
+    "Clear Takeover + Audit": {
+      "main": [
+        [
+          {
+            "node": "Salesforce: Clear Human Takeover",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Salesforce: Clear Human Takeover": {
       "main": [
-        [{ "node": "Respond Resume Result", "type": "main", "index": 0 }],
-        [{ "node": "Respond Resume Result", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Respond Resume Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Resume Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   }
