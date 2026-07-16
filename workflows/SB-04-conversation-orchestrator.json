@@ -897,6 +897,33 @@
       ],
       "parameters": {},
       "notes": "global_ai_enabled is enforced upstream in SB-01 before this workflow is invoked, and re-checked by SB-06 before any send. This workflow never sends directly."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/mark-read",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $('When Executed by Another Workflow').first().json.customer_number, from_number: $env.SENDBLUE_FROM_NUMBER }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        -200
+      ],
+      "id": "sb04-mark-read",
+      "name": "Sendblue: Mark Read (fail-soft)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      },
+      "onError": "continueErrorOutput"
     }
   ],
   "connections": {
@@ -916,6 +943,11 @@
         [
           {
             "node": "Debounce Rapid Messages",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sendblue: Mark Read (fail-soft)",
             "type": "main",
             "index": 0
           }
