@@ -5,25 +5,55 @@
     "core-sync": "1.0.0",
     "description": "Loads recent Sendblue history + sanitized Salesforce context, cancels pending follow-ups, debounces, routes deterministic intents, calls Claude with strict JSON output (one repair attempt), applies permitted Salesforce updates only, and hands the approved reply to SB-06. Claude never sends messages or changes stages."
   },
-  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter"
+  },
   "nodes": [
     {
       "id": "sb04-trigger",
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {
         "workflowInputs": {
           "values": [
-            { "name": "correlation_id", "type": "string" },
-            { "name": "customer_number", "type": "string" },
-            { "name": "customer_ref", "type": "string" },
-            { "name": "message_handle", "type": "string" },
-            { "name": "inbound_content", "type": "string" },
-            { "name": "has_media", "type": "boolean" },
-            { "name": "sensitive_types", "type": "string" },
-            { "name": "resolution", "type": "string" }
+            {
+              "name": "correlation_id",
+              "type": "string"
+            },
+            {
+              "name": "customer_number",
+              "type": "string"
+            },
+            {
+              "name": "customer_ref",
+              "type": "string"
+            },
+            {
+              "name": "message_handle",
+              "type": "string"
+            },
+            {
+              "name": "inbound_content",
+              "type": "string"
+            },
+            {
+              "name": "has_media",
+              "type": "boolean"
+            },
+            {
+              "name": "sensitive_types",
+              "type": "string"
+            },
+            {
+              "name": "resolution",
+              "type": "string"
+            }
           ]
         }
       }
@@ -33,37 +63,67 @@
       "name": "Cancel Pending Follow-Ups (Inbound Activity)",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1,
-      "position": [200, 0],
+      "position": [
+        200,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "operation": "update",
-        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "followup_jobs" },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "followup_jobs"
+        },
         "filters": {
           "conditions": [
-            { "keyName": "normalized_phone_hash", "condition": "eq", "keyValue": "={{ $json.customer_ref }}" },
-            { "keyName": "status", "condition": "eq", "keyValue": "scheduled" }
+            {
+              "keyName": "normalized_phone_hash",
+              "condition": "eq",
+              "keyValue": "={{ $json.customer_ref }}"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "scheduled"
+            }
           ]
         },
         "columns": {
           "mappingMode": "defineBelow",
-          "value": { "status": "cancelled", "resolution": "customer_replied", "resolved_at": "={{ $now.toISO() }}" }
+          "value": {
+            "status": "cancelled",
+            "resolution": "customer_replied",
+            "resolved_at": "={{ $now.toISO() }}"
+          }
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "sb04-debounce",
       "name": "Debounce Rapid Messages",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [400, 0],
-      "parameters": { "amount": 20, "unit": "seconds" }
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "amount": 20,
+        "unit": "seconds"
+      }
     },
     {
       "id": "sb04-typing-start",
       "name": "Typing Indicator Start (fail-soft)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [600, -160],
+      "position": [
+        600,
+        -160
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -73,16 +133,27 @@
         "jsonBody": "={{ JSON.stringify({ number: $('When Executed by Another Workflow').first().json.customer_number }) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "timeout": 5000, "$comment": "ASSUMPTIONS A-07 — configurable path, failures ignored" }
+        "options": {
+          "timeout": 5000,
+          "$comment": "ASSUMPTIONS A-07 — configurable path, failures ignored"
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb04-history",
       "name": "Sendblue: Recent Conversation History",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [600, 0],
+      "position": [
+        600,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
@@ -90,24 +161,46 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "number", "value": "={{ $('When Executed by Another Workflow').first().json.customer_number }}" },
-            { "name": "limit", "value": "15" },
-            { "name": "order_by", "value": "createdAt" },
-            { "name": "order_direction", "value": "desc" }
+            {
+              "name": "number",
+              "value": "={{ $('When Executed by Another Workflow').first().json.customer_number }}"
+            },
+            {
+              "name": "limit",
+              "value": "15"
+            },
+            {
+              "name": "order_by",
+              "value": "createdAt"
+            },
+            {
+              "name": "order_direction",
+              "value": "desc"
+            }
           ]
         },
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "timeout": 15000 }
+        "options": {
+          "timeout": 15000
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb04-route",
       "name": "Deterministic Intent Router",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [820, 0],
+      "position": [
+        820,
+        0
+      ],
       "parameters": {
         "jsCode": "// core-sync: 1.0.0 — deterministic routing BEFORE any model call.\n// Order: suppressed states -> sensitive -> media-only -> status request -> human request -> model.\nconst inp = $('When Executed by Another Workflow').first().json;\nconst resolution = JSON.parse(inp.resolution || '{}');\nconst sensitiveTypes = JSON.parse(inp.sensitive_types || '[]');\nlet history = [];\ntry { const h = $('Sendblue: Recent Conversation History').first().json; history = (h.messages || h.data || (Array.isArray(h) ? h : [])).map(m => ({ dir: m.is_outbound ? 'out' : 'in', content: (m.content || '').slice(0, 400), at: m.date_sent || m.date_created || null })).reverse(); } catch (e) { history = []; }\nconst text = (inp.inbound_content || '').toLowerCase();\nconst outcome = resolution.outcome || 'no_match';\nlet route = 'model';\nif (['opted_out', 'wrong_number', 'human_takeover', 'ai_disabled'].includes(outcome)) route = 'suppress';\nelse if (outcome === 'resolver_error') route = 'handoff';\nelse if (outcome === 'multiple_match') route = 'ambiguous';\nelse if (sensitiveTypes.length > 0) route = 'sensitive';\nelse if (inp.has_media && !text.trim()) route = 'media_only';\nelse if (/(what('|’)?s going on with my (application|file)|where am i in the process|did you (get|receive) my (application|documents|docs)|status of my (application|file|loan)|am i approved|when am i getting funded|who is handling my file|what else do you need)/.test(text)) route = 'status_lookup';\nelse if (/(talk|speak) to (a |an )?(human|person|agent|rep)|call me|can someone call|real person/.test(text)) route = 'human_request';\nconst debounced_content = history.filter(h => h.dir === 'in').slice(-3).map(h => h.content).join('\\n');\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-04', workflow_version: '1.0.0', correlation_id: inp.correlation_id, action: 'route_intent', route, resolution_outcome: outcome, message_handle: inp.message_handle, ts: new Date().toISOString() }));\nreturn [{ json: { ...inp, resolution, sensitive_types_arr: sensitiveTypes, history, route, debounced_content } }];"
       }
@@ -117,15 +210,137 @@
       "name": "Route Switch",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [1040, 0],
+      "position": [
+        1040,
+        0
+      ],
       "parameters": {
         "rules": {
           "values": [
-            { "outputKey": "suppress", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.route }}", "rightValue": "suppress", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
-            { "outputKey": "template_reply", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "or", "conditions": [ { "leftValue": "={{ $json.route }}", "rightValue": "sensitive", "operator": { "type": "string", "operation": "equals" } }, { "leftValue": "={{ $json.route }}", "rightValue": "media_only", "operator": { "type": "string", "operation": "equals" } }, { "leftValue": "={{ $json.route }}", "rightValue": "ambiguous", "operator": { "type": "string", "operation": "equals" } } ] }, "renameOutput": true },
-            { "outputKey": "status_lookup", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.route }}", "rightValue": "status_lookup", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
-            { "outputKey": "handoff", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "or", "conditions": [ { "leftValue": "={{ $json.route }}", "rightValue": "handoff", "operator": { "type": "string", "operation": "equals" } }, { "leftValue": "={{ $json.route }}", "rightValue": "human_request", "operator": { "type": "string", "operation": "equals" } } ] }, "renameOutput": true },
-            { "outputKey": "model", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.route }}", "rightValue": "model", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true }
+            {
+              "outputKey": "suppress",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "suppress",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "template_reply",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "or",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "sensitive",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "media_only",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "ambiguous",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "status_lookup",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "status_lookup",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "handoff",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "or",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "handoff",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "human_request",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "model",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "model",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            }
           ]
         },
         "options": {}
@@ -136,7 +351,10 @@
       "name": "Log Suppression",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1260, -320],
+      "position": [
+        1260,
+        -320
+      ],
       "parameters": {
         "jsCode": "console.log(JSON.stringify({ level: 'info', workflow: 'SB-04', correlation_id: $json.correlation_id, action: 'suppress', reason: $json.resolution.outcome, ts: new Date().toISOString() }));\nreturn [{ json: { suppressed: true, reason: $json.resolution.outcome, correlation_id: $json.correlation_id } }];"
       }
@@ -146,7 +364,10 @@
       "name": "Build Template Reply",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1260, -160],
+      "position": [
+        1260,
+        -160
+      ],
       "parameters": {
         "jsCode": "// Deterministic template replies (prompts/fallback-messages.json wording, provided via env FALLBACK_MESSAGES_JSON so compliance-approved copy lives in n8n config).\nconst templates = JSON.parse($env.FALLBACK_MESSAGES_JSON || '{}').templates || {};\nconst pick = { sensitive: 'sensitive_info_warning', media_only: 'media_redirect_secure_portal', ambiguous: 'ambiguous_record' }[$json.route];\nconst content = templates[pick] || 'Thanks for your message — a member of our team will follow up shortly.';\nreturn [{ json: { correlation_id: $json.correlation_id, customer_number: $json.customer_number, customer_ref: $json.customer_ref, content, template_id: pick, is_reply_to_inbound: true, record_ref: $json.resolution.sanitized ? $json.resolution.sanitized.record_ref : null, escalate: $json.route === 'ambiguous' || $json.sensitive_types_arr.length > 1 } }];"
       }
@@ -156,10 +377,18 @@
       "name": "Execute SB-05 Status Lookup",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [1260, 0],
+      "position": [
+        1260,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-05 Process Status Lookup" },
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "SB-05 Process Status Lookup"
+        },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
@@ -177,10 +406,18 @@
       "name": "Execute SB-09 Handoff",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [1260, 160],
+      "position": [
+        1260,
+        160
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-09 Human Handoff and Resume" },
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "SB-09 Human Handoff and Resume"
+        },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
@@ -201,7 +438,10 @@
       "name": "Build Sanitized Claude Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1260, 320],
+      "position": [
+        1260,
+        320
+      ],
       "parameters": {
         "jsCode": "// core-sync: 1.0.0 — data minimization: ONLY approved context reaches the model.\n// Excluded by construction: credentials, tokens, internal notes, other customers' data, owner ids, unapproved underwriting info.\nconst j = $json;\nconst sys = ($env.EMMA_SYSTEM_PROMPT || 'You are {{ASSISTANT_NAME}}, a virtual assistant for {{COMPANY_NAME}}. Reply ONLY with the JSON object matching the schema.').replaceAll('{{ASSISTANT_NAME}}', $env.ASSISTANT_NAME || 'Emma').replaceAll('{{COMPANY_NAME}}', $env.COMPANY_NAME || 'Big Think Capital');\nconst qualRules = JSON.parse($env.QUALIFICATION_RULES_JSON || '{}');\nconst enabledFields = (qualRules.collectable_fields || []).filter(f => f.enabled).sort((a, b) => a.priority - b.priority);\nconst s = j.resolution.sanitized || {};\nconst known = { first_name: s.first_name || null, business_name: s.business_name || null };\nconst missing = enabledFields.filter(f => !known[f.key]).map(f => f.key);\nconst faq = JSON.parse($env.APPROVED_FAQ_JSON || '{\"entries\":[]}').entries.filter(e => e.active && e.placeholder_requires_compliance_approval === false && e.required_verification_level === 0).map(e => ({ q: e.approved_question, a: e.approved_answer }));\nconst context = {\n  resolution_outcome: j.resolution.outcome,\n  verification_level: 0,\n  customer_safe_stage: s.conversation_stage || (j.resolution.outcome === 'no_match' ? 'NEW_LEAD' : null),\n  salesforce: j.resolution.outcome === 'single_match' ? { first_name: s.first_name, business_name: s.business_name, stage: s.conversation_stage, application_link_on_file: s.application_link_on_file } : null,\n  missing_fields: missing.slice(0, 8),\n  approved_faq: faq,\n  human_takeover: s.human_takeover === true,\n  ai_enabled: s.ai_enabled !== false,\n  has_media: j.has_media === true\n};\nconst schema = JSON.parse($env.STRUCTURED_OUTPUT_SCHEMA_JSON || '{}');\nconst userMsg = `CONTEXT:\\n${JSON.stringify(context, null, 1)}\\n\\nRECENT MESSAGES (oldest first):\\n${j.history.map(h => `${h.dir === 'in' ? 'CUSTOMER' : 'ASSISTANT'}: ${h.content}`).join('\\n') || '(none)'}\\n\\nCURRENT INBOUND MESSAGE:\\n${j.inbound_content}\\n\\nOUTPUT JSON SCHEMA (return exactly one conforming JSON object, nothing else):\\n${JSON.stringify(schema)}`;\nreturn [{ json: { ...j, anthropic_request: { model: $env.ANTHROPIC_MODEL || 'claude-sonnet-5', max_tokens: Number($env.ANTHROPIC_MAX_TOKENS || 1024), system: sys, messages: [{ role: 'user', content: userMsg }] } } }];"
       }
@@ -211,28 +451,48 @@
       "name": "Claude: Generate Structured Reply",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1480, 320],
+      "position": [
+        1480,
+        320
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "anthropic-version", "value": "2023-06-01" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json.anthropic_request) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Anthropic API (x-api-key) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Anthropic API (x-api-key) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb04-validate",
       "name": "Validate Structured Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1700, 320],
+      "position": [
+        1700,
+        320
+      ],
       "parameters": {
         "jsCode": "// core-sync: 1.0.0 — mirrors extractJson/validateStructuredOutput in scripts/lib/agent-core.mjs.\nconst src = $('Build Sanitized Claude Request').first().json;\nconst schema = JSON.parse($env.STRUCTURED_OUTPUT_SCHEMA_JSON || '{}');\nfunction extractJson(raw) { const t = String(raw || '').trim(); try { return JSON.parse(t); } catch {} const s = t.indexOf('{'), e = t.lastIndexOf('}'); if (s >= 0 && e > s) { try { return JSON.parse(t.slice(s, e + 1)); } catch {} } return null; }\nfunction validate(obj, sch) { const errors = []; const check = (value, s, p) => { const types = Array.isArray(s.type) ? s.type : [s.type]; const jt = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value; if (s.type && !types.includes(jt)) { errors.push(p + ': type'); return; } if (s.enum && !s.enum.includes(value)) errors.push(p + ': enum'); if (jt === 'string' && s.maxLength && value.length > s.maxLength) errors.push(p + ': maxLength'); if (jt === 'number') { if (s.minimum !== undefined && value < s.minimum) errors.push(p + ': min'); if (s.maximum !== undefined && value > s.maximum) errors.push(p + ': max'); } if (jt === 'array' && s.items) value.forEach((it, i) => check(it, s.items, p + '[' + i + ']')); if (jt === 'object' && s.properties) { for (const r of s.required || []) if (!(r in value)) errors.push(p + '.' + r + ': missing'); if (s.additionalProperties === false) for (const k of Object.keys(value)) if (!s.properties[k]) errors.push(p + '.' + k + ': extra'); for (const [k, v] of Object.entries(value)) if (s.properties[k]) check(v, s.properties[k], p + '.' + k); } }; if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return { valid: false, errors: ['root'] }; check(obj, sch, '$'); return { valid: errors.length === 0, errors }; }\nlet raw = null, apiFailed = false;\ntry { const resp = $('Claude: Generate Structured Reply').first().json; raw = (resp.content && resp.content[0] && resp.content[0].text) || null; if (!raw) apiFailed = true; } catch (e) { apiFailed = true; }\nconst parsed = raw ? extractJson(raw) : null;\nconst v = parsed ? validate(parsed, schema) : { valid: false, errors: ['no_output'] };\nreturn [{ json: { ...src, model_output: parsed, model_valid: v.valid, model_errors: v.errors, api_failed: apiFailed, attempt: 1 } }];"
       }
@@ -242,12 +502,27 @@
       "name": "Model Output Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1920, 320],
+      "position": [
+        1920,
+        320
+      ],
       "parameters": {
         "conditions": {
-          "options": { "typeValidation": "strict" },
+          "options": {
+            "typeValidation": "strict"
+          },
           "combinator": "and",
-          "conditions": [{ "leftValue": "={{ $json.model_valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }]
+          "conditions": [
+            {
+              "leftValue": "={{ $json.model_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
         }
       }
     },
@@ -256,28 +531,48 @@
       "name": "Claude: One Repair Attempt",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2140, 480],
+      "position": [
+        2140,
+        480
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{ "name": "anthropic-version", "value": "2023-06-01" }] },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ model: $json.anthropic_request.model, max_tokens: $json.anthropic_request.max_tokens, system: $json.anthropic_request.system, messages: [ ...$json.anthropic_request.messages, { role: 'assistant', content: JSON.stringify($json.model_output) || 'INVALID' }, { role: 'user', content: 'Your previous output failed schema validation: ' + $json.model_errors.join('; ') + '. Return ONLY one corrected JSON object conforming exactly to the schema.' } ] }) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "timeout": 30000 }
+        "options": {
+          "timeout": 30000
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Anthropic API (x-api-key) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Anthropic API (x-api-key) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb04-revalidate",
       "name": "Validate Repair (Final)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2360, 480],
+      "position": [
+        2360,
+        480
+      ],
       "parameters": {
         "jsCode": "// core-sync: 1.0.0 — after one failed repair: never send malformed output; safe fallback + log + escalate flag.\nconst src = $('Validate Structured Output').first().json;\nconst schema = JSON.parse($env.STRUCTURED_OUTPUT_SCHEMA_JSON || '{}');\nfunction extractJson(raw) { const t = String(raw || '').trim(); try { return JSON.parse(t); } catch {} const s = t.indexOf('{'), e = t.lastIndexOf('}'); if (s >= 0 && e > s) { try { return JSON.parse(t.slice(s, e + 1)); } catch {} } return null; }\nfunction validate(obj, sch) { const errors = []; const check = (value, s, p) => { const types = Array.isArray(s.type) ? s.type : [s.type]; const jt = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value; if (s.type && !types.includes(jt)) { errors.push(p + ': type'); return; } if (s.enum && !s.enum.includes(value)) errors.push(p + ': enum'); if (jt === 'string' && s.maxLength && value.length > s.maxLength) errors.push(p + ': maxLength'); if (jt === 'number') { if (s.minimum !== undefined && value < s.minimum) errors.push(p + ': min'); if (s.maximum !== undefined && value > s.maximum) errors.push(p + ': max'); } if (jt === 'array' && s.items) value.forEach((it, i) => check(it, s.items, p + '[' + i + ']')); if (jt === 'object' && s.properties) { for (const r of s.required || []) if (!(r in value)) errors.push(p + '.' + r + ': missing'); if (s.additionalProperties === false) for (const k of Object.keys(value)) if (!s.properties[k]) errors.push(p + '.' + k + ': extra'); for (const [k, v] of Object.entries(value)) if (s.properties[k]) check(v, s.properties[k], p + '.' + k); } }; if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return { valid: false, errors: ['root'] }; check(obj, sch, '$'); return { valid: errors.length === 0, errors }; }\nlet parsed = null;\ntry { const resp = $('Claude: One Repair Attempt').first().json; parsed = extractJson((resp.content && resp.content[0] && resp.content[0].text) || ''); } catch (e) { parsed = null; }\nconst v = parsed ? validate(parsed, schema) : { valid: false, errors: ['repair_failed'] };\nif (v.valid) return [{ json: { ...src, model_output: parsed, model_valid: true, attempt: 2 } }];\nconsole.log(JSON.stringify({ level: 'error', workflow: 'SB-04', correlation_id: src.correlation_id, action: 'model_output_invalid_after_repair', errors: v.errors.slice(0, 5), ts: new Date().toISOString() }));\nreturn [{ json: { ...src, model_output: null, model_valid: false, attempt: 2, use_fallback: true } }];"
       }
@@ -287,7 +582,10 @@
       "name": "Action Gate + Salesforce Update Plan",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2580, 320],
+      "position": [
+        2580,
+        320
+      ],
       "parameters": {
         "jsCode": "// core-sync: 1.0.0 — mirrors isActionPermitted/validateOutboundContent in scripts/lib/agent-core.mjs.\n// The model RECOMMENDS; this node DECIDES. Claude never changes stages or sends.\nconst j = $json;\nconst templates = JSON.parse($env.FALLBACK_MESSAGES_JSON || '{}').templates || {};\nconst compliance = JSON.parse($env.COMPLIANCE_RULES_JSON || '{}');\nconst map = JSON.parse($env.SF_FIELD_MAP_JSON || '{}');\nconst m = map.mappings || {};\nconst outcome = j.resolution.outcome || 'no_match';\nconst ALLOWED = { no_match: ['reply_only','create_lead','human_handoff','suppress','no_action','schedule_followup'], single_match: ['reply_only','update_record','lookup_status','send_application_link','schedule_call','schedule_followup','human_handoff','suppress','no_action'], multiple_match: ['human_handoff','suppress','no_action','reply_only'], opted_out: ['suppress','no_action'], wrong_number: ['suppress','no_action'], human_takeover: ['suppress','no_action'], ai_disabled: ['suppress','no_action'] };\nfunction contentOk(content, templateId) { const v = compliance.outbound_validation || {}; const t = String(content || ''); if (v.block_empty && !t.trim()) return { ok: false, reason: 'empty' }; if (v.max_message_length && t.length > v.max_message_length) return { ok: false, reason: 'too_long' }; if (templateId && (v.whitelisted_template_ids || []).includes(templateId)) return { ok: true }; for (const p of v.forbidden_content_patterns || []) { try { if (new RegExp(p, 'i').test(t)) return { ok: false, reason: 'forbidden_pattern' }; } catch {} } return { ok: true }; }\nlet reply = null, templateId = null, action = 'no_action', handoff = false, handoffReason = null, extracted = {};\nif (j.use_fallback || !j.model_valid || !j.model_output) {\n  reply = templates.fallback_generic || null; templateId = 'fallback_generic'; action = 'reply_only'; handoff = true; handoffReason = 'invalid_model_output';\n} else {\n  const o = j.model_output;\n  extracted = o.extracted_fields || {};\n  action = (ALLOWED[outcome] || ['suppress']).includes(o.requested_action) ? o.requested_action : 'no_action';\n  // Injection / sensitive double-checks on OUTPUT\n  const markers = (compliance.prompt_injection && compliance.prompt_injection.output_markers) || [];\n  const injected = o.detected_intent === 'prompt_injection' || markers.some(mk => (o.reply_text || '').toLowerCase().includes(mk));\n  if (injected) { reply = templates.fallback_generic; templateId = 'fallback_generic'; action = 'reply_only'; }\n  else if (action === 'suppress' || outcome === 'human_takeover' || outcome === 'ai_disabled') { reply = null; action = 'suppress'; }\n  else { reply = o.reply_text || null; }\n  handoff = o.request_human_handoff === true || o.confidence < 0.55 || ['complaint','human_request'].includes(o.detected_intent);\n  handoffReason = o.handoff_reason || (o.confidence < 0.55 ? 'low_confidence' : (handoff ? o.detected_intent : null));\n  if (action === 'send_application_link') { const base = $env.APPLICATION_LINK_BASE_URL; if (base) { reply = (templates.application_link || 'Here is your secure application link: {application_link}').replace('{application_link}', base); templateId = 'application_link'; } else { action = 'human_handoff'; handoff = true; handoffReason = 'application_link_not_configured'; } }\n}\nif (reply) { const c = contentOk(reply, templateId); if (!c.ok) { console.log(JSON.stringify({ level: 'warn', workflow: 'SB-04', correlation_id: j.correlation_id, action: 'blocked_noncompliant_content', reason: c.reason, ts: new Date().toISOString() })); reply = templates.fallback_generic || null; templateId = 'fallback_generic'; handoff = true; handoffReason = handoffReason || 'compliance_block'; } }\n// Salesforce write plan — fill-empty-only conflict rule; stage fields NEVER set from model values except the mapped conversation_stage bookkeeping field.\nconst updates = {};\nif (outcome === 'single_match' && ['update_record','send_application_link','schedule_call','reply_only'].includes(action)) {\n  const s = j.resolution.sanitized || {};\n  const setIf = (logical, current, value) => { const spec = m[logical]; if (!spec || spec.field === 'UNMAPPED' || spec.object !== j.resolution.record_object) return; if (value === null || value === undefined || value === '') return; const rule = (map.conflict_rules && (map.conflict_rules.overrides || {})[logical]) || (map.conflict_rules || {}).default || 'fill_empty_only'; if (rule === 'fill_empty_only' && current) return; updates[spec.field] = value; };\n  setIf('first_name', s.first_name, extracted.first_name);\n  setIf('business_name', s.business_name && s.business_name !== ($env.SF_COMPANY_PLACEHOLDER || 'Unknown (Sendblue AI intake)') ? s.business_name : null, extracted.business_name);\n  setIf('industry', null, extracted.industry);\n  setIf('business_state', null, extracted.business_state);\n  setIf('time_in_business', null, extracted.time_in_business_months);\n  setIf('monthly_gross_revenue', null, extracted.monthly_gross_revenue);\n  setIf('requested_amount', null, extracted.requested_amount);\n  setIf('use_of_funds', null, extracted.use_of_funds);\n  setIf('funding_urgency', null, extracted.funding_urgency);\n  setIf('preferred_call_time', null, extracted.preferred_call_time);\n  setIf('email', null, extracted.email);\n  const liSpec = m.last_inbound_date; if (liSpec && liSpec.field !== 'UNMAPPED' && liSpec.object === j.resolution.record_object) updates[liSpec.field] = new Date().toISOString();\n}\nconst createLead = outcome === 'no_match' && action === 'create_lead' && ['new_funding_interest','qualification_answer','greeting','application_request'].includes((j.model_output || {}).detected_intent || '');\nreturn [{ json: { correlation_id: j.correlation_id, customer_number: j.customer_number, customer_ref: j.customer_ref, record_ref: j.resolution.sanitized ? j.resolution.sanitized.record_ref : null, record_id: j.resolution.record_id || null, record_object: j.resolution.record_object || null, reply, template_id: templateId, action, handoff, handoff_reason: handoffReason, sf_updates: updates, create_lead: createLead, extracted, history: j.history, is_reply_to_inbound: true } }];"
       }
@@ -297,7 +595,10 @@
       "name": "Salesforce: Create Lead (Journey A)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2800, 160],
+      "position": [
+        2800,
+        160
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -307,16 +608,27 @@
         "jsonBody": "={{ JSON.stringify(Object.fromEntries(Object.entries({ FirstName: $json.extracted.first_name, LastName: $json.extracted.last_name || 'Unknown', Company: $json.extracted.business_name || $env.SF_COMPANY_PLACEHOLDER || 'Unknown (Sendblue AI intake)', MobilePhone: $json.customer_number, LeadSource: $env.SF_LEAD_SOURCE || 'Sendblue AI' }).filter(([, v]) => v !== null && v !== undefined))) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "timeout": 15000, "$comment": "Duplicate prevention: SB-03 found no_match this turn; message-handle dedupe + contact lock prevent double-create per inbound. Ownership routing per field map lead_intake config is applied post-create by RPA/flow or a queue default." }
+        "options": {
+          "timeout": 15000,
+          "$comment": "Duplicate prevention: SB-03 found no_match this turn; message-handle dedupe + contact lock prevent double-create per inbound. Ownership routing per field map lead_intake config is applied post-create by RPA/flow or a queue default."
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb04-update",
       "name": "Salesforce: Update Record (fill-empty-only)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2800, 320],
+      "position": [
+        2800,
+        320
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "PATCH",
@@ -326,16 +638,26 @@
         "jsonBody": "={{ JSON.stringify($json.sf_updates) }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "timeout": 15000 }
+        "options": {
+          "timeout": 15000
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb04-branch",
       "name": "Plan Branches",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2800, 480],
+      "position": [
+        2800,
+        480
+      ],
       "parameters": {
         "jsCode": "// Emits one item per required side-effect so each branch runs at most once.\nconst j = $json;\nconst out = [];\nif (j.create_lead) out.push({ json: { ...j, side_effect: 'create_lead' } });\nif (Object.keys(j.sf_updates || {}).length && j.record_id) out.push({ json: { ...j, side_effect: 'update' } });\nif (j.handoff) out.push({ json: { ...j, side_effect: 'handoff' } });\nif (j.reply && j.action !== 'suppress') out.push({ json: { ...j, side_effect: 'send' } });\nif (!out.length) out.push({ json: { ...j, side_effect: 'none' } });\nreturn out;"
       }
@@ -345,17 +667,98 @@
       "name": "Side Effect Switch",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
-      "position": [3020, 480],
+      "position": [
+        3020,
+        480
+      ],
       "parameters": {
         "rules": {
           "values": [
-            { "outputKey": "create_lead", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.side_effect }}", "rightValue": "create_lead", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
-            { "outputKey": "update", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.side_effect }}", "rightValue": "update", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
-            { "outputKey": "handoff", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.side_effect }}", "rightValue": "handoff", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true },
-            { "outputKey": "send", "conditions": { "options": { "typeValidation": "strict" }, "combinator": "and", "conditions": [{ "leftValue": "={{ $json.side_effect }}", "rightValue": "send", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true }
+            {
+              "outputKey": "create_lead",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.side_effect }}",
+                    "rightValue": "create_lead",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "update",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.side_effect }}",
+                    "rightValue": "update",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "handoff",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.side_effect }}",
+                    "rightValue": "handoff",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "send",
+              "conditions": {
+                "options": {
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.side_effect }}",
+                    "rightValue": "send",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            }
           ]
         },
-        "options": { "fallbackOutput": "extra" }
+        "options": {
+          "fallbackOutput": "extra"
+        }
       }
     },
     {
@@ -363,10 +766,18 @@
       "name": "Execute SB-09 Handoff (Model-Recommended)",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [3240, 480],
+      "position": [
+        3240,
+        480
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-09 Human Handoff and Resume" },
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "SB-09 Human Handoff and Resume"
+        },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
@@ -386,10 +797,18 @@
       "name": "Execute SB-06 Outbound Dispatcher",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [3240, 640],
+      "position": [
+        3240,
+        640
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-06 Outbound Dispatcher" },
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "SB-06 Outbound Dispatcher"
+        },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
@@ -410,10 +829,18 @@
       "name": "Dispatch Template Reply via SB-06",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [1480, -160],
+      "position": [
+        1480,
+        -160
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-06 Outbound Dispatcher" },
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "SB-06 Outbound Dispatcher"
+        },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
@@ -434,7 +861,10 @@
       "name": "Typing Indicator Stop (fail-soft)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3460, 480],
+      "position": [
+        3460,
+        480
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
@@ -444,90 +874,399 @@
         "jsonBody": "={{ JSON.stringify({ number: $json.customer_number || $('When Executed by Another Workflow').first().json.customer_number, action: 'stop' }) }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "timeout": 5000, "$comment": "ASSUMPTIONS A-07" }
+        "options": {
+          "timeout": 5000,
+          "$comment": "ASSUMPTIONS A-07"
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb04-note-kill",
       "name": "Note: Kill Switch Enforcement",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [0, 200],
+      "position": [
+        0,
+        200
+      ],
       "parameters": {},
       "notes": "global_ai_enabled is enforced upstream in SB-01 before this workflow is invoked, and re-checked by SB-06 before any send. This workflow never sends directly."
     }
   ],
   "connections": {
-    "When Executed by Another Workflow": { "main": [[{ "node": "Cancel Pending Follow-Ups (Inbound Activity)", "type": "main", "index": 0 }]] },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Cancel Pending Follow-Ups (Inbound Activity)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Cancel Pending Follow-Ups (Inbound Activity)": {
       "main": [
-        [{ "node": "Debounce Rapid Messages", "type": "main", "index": 0 }],
-        [{ "node": "Debounce Rapid Messages", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Debounce Rapid Messages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Debounce Rapid Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Debounce Rapid Messages": {
-      "main": [[
-        { "node": "Typing Indicator Start (fail-soft)", "type": "main", "index": 0 },
-        { "node": "Sendblue: Recent Conversation History", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Typing Indicator Start (fail-soft)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sendblue: Recent Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Typing Indicator Start (fail-soft)": { "main": [[], []] },
+    "Typing Indicator Start (fail-soft)": {
+      "main": [
+        [],
+        []
+      ]
+    },
     "Sendblue: Recent Conversation History": {
       "main": [
-        [{ "node": "Deterministic Intent Router", "type": "main", "index": 0 }],
-        [{ "node": "Deterministic Intent Router", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Deterministic Intent Router",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Deterministic Intent Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Deterministic Intent Router": { "main": [[{ "node": "Route Switch", "type": "main", "index": 0 }]] },
+    "Deterministic Intent Router": {
+      "main": [
+        [
+          {
+            "node": "Route Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Route Switch": {
       "main": [
-        [{ "node": "Log Suppression", "type": "main", "index": 0 }],
-        [{ "node": "Build Template Reply", "type": "main", "index": 0 }],
-        [{ "node": "Execute SB-05 Status Lookup", "type": "main", "index": 0 }],
-        [{ "node": "Execute SB-09 Handoff", "type": "main", "index": 0 }],
-        [{ "node": "Build Sanitized Claude Request", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Log Suppression",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Template Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute SB-05 Status Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute SB-09 Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Sanitized Claude Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Build Template Reply": { "main": [[{ "node": "Dispatch Template Reply via SB-06", "type": "main", "index": 0 }]] },
-    "Build Sanitized Claude Request": { "main": [[{ "node": "Claude: Generate Structured Reply", "type": "main", "index": 0 }]] },
+    "Build Template Reply": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Template Reply via SB-06",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sanitized Claude Request": {
+      "main": [
+        [
+          {
+            "node": "Claude: Generate Structured Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Claude: Generate Structured Reply": {
       "main": [
-        [{ "node": "Validate Structured Output", "type": "main", "index": 0 }],
-        [{ "node": "Validate Structured Output", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Validate Structured Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Structured Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Validate Structured Output": { "main": [[{ "node": "Model Output Valid?", "type": "main", "index": 0 }]] },
+    "Validate Structured Output": {
+      "main": [
+        [
+          {
+            "node": "Model Output Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Model Output Valid?": {
       "main": [
-        [{ "node": "Action Gate + Salesforce Update Plan", "type": "main", "index": 0 }],
-        [{ "node": "Claude: One Repair Attempt", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Action Gate + Salesforce Update Plan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claude: One Repair Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Claude: One Repair Attempt": {
       "main": [
-        [{ "node": "Validate Repair (Final)", "type": "main", "index": 0 }],
-        [{ "node": "Validate Repair (Final)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Validate Repair (Final)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Repair (Final)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Validate Repair (Final)": { "main": [[{ "node": "Action Gate + Salesforce Update Plan", "type": "main", "index": 0 }]] },
-    "Action Gate + Salesforce Update Plan": { "main": [[{ "node": "Plan Branches", "type": "main", "index": 0 }]] },
-    "Plan Branches": { "main": [[{ "node": "Side Effect Switch", "type": "main", "index": 0 }]] },
+    "Validate Repair (Final)": {
+      "main": [
+        [
+          {
+            "node": "Action Gate + Salesforce Update Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Gate + Salesforce Update Plan": {
+      "main": [
+        [
+          {
+            "node": "Plan Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan Branches": {
+      "main": [
+        [
+          {
+            "node": "Side Effect Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Side Effect Switch": {
       "main": [
-        [{ "node": "Salesforce: Create Lead (Journey A)", "type": "main", "index": 0 }],
-        [{ "node": "Salesforce: Update Record (fill-empty-only)", "type": "main", "index": 0 }],
-        [{ "node": "Execute SB-09 Handoff (Model-Recommended)", "type": "main", "index": 0 }],
-        [{ "node": "Execute SB-06 Outbound Dispatcher", "type": "main", "index": 0 }],
-        [{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Salesforce: Create Lead (Journey A)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Salesforce: Update Record (fill-empty-only)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute SB-09 Handoff (Model-Recommended)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute SB-06 Outbound Dispatcher",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Salesforce: Create Lead (Journey A)": { "main": [[{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }], [{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }]] },
-    "Salesforce: Update Record (fill-empty-only)": { "main": [[{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }], [{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }]] },
-    "Execute SB-09 Handoff (Model-Recommended)": { "main": [[{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }], [{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }]] },
-    "Execute SB-06 Outbound Dispatcher": { "main": [[{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }], [{ "node": "Typing Indicator Stop (fail-soft)", "type": "main", "index": 0 }]] },
-    "Execute SB-05 Status Lookup": { "main": [[], []] },
-    "Execute SB-09 Handoff": { "main": [[], []] },
-    "Dispatch Template Reply via SB-06": { "main": [[], []] }
+    "Salesforce: Create Lead (Journey A)": {
+      "main": [
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salesforce: Update Record (fill-empty-only)": {
+      "main": [
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute SB-09 Handoff (Model-Recommended)": {
+      "main": [
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute SB-06 Outbound Dispatcher": {
+      "main": [
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Typing Indicator Stop (fail-soft)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute SB-05 Status Lookup": {
+      "main": [
+        [],
+        []
+      ]
+    },
+    "Execute SB-09 Handoff": {
+      "main": [
+        [],
+        []
+      ]
+    },
+    "Dispatch Template Reply via SB-06": {
+      "main": [
+        [],
+        []
+      ]
+    }
   }
 }
