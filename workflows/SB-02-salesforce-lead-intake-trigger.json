@@ -123,7 +123,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// Template comes from compliance-reviewed config only — never model-generated.\nconst templates = JSON.parse($env.OUTREACH_TEMPLATES_JSON || '{}');\nconst t = templates[$json.template_id];\nif (!t) { console.log(JSON.stringify({ level: 'warn', workflow: 'SB-02', correlation_id: $json.correlation_id, action: 'skipped_no_approved_template', template_id: $json.template_id, ts: new Date().toISOString() })); return []; }\nreturn [{ json: { ...$json, content: t.replace('{name}', $json.first_name ? ' ' + $json.first_name : '') } }];"
+        "jsCode": "// Template comes from compliance-reviewed config only — never model-generated.\nconst templates = JSON.parse($env.OUTREACH_TEMPLATES_JSON || '{}');\nconst t = templates[$json.template_id];\nif (!t) { console.log(JSON.stringify({ level: 'warn', workflow: 'SB-02', correlation_id: $json.correlation_id, action: 'skipped_no_approved_template', template_id: $json.template_id, ts: new Date().toISOString() })); return []; }\nconst content = t.replace('{name}', $json.first_name ? ' ' + $json.first_name : '')\n  .replaceAll('{assistant_name}', $env.ASSISTANT_NAME || 'Emma')\n  .replaceAll('{company_name}', $env.COMPANY_NAME || 'Big Think Capital');\n// First-touch messages carry Emma's contact card so the customer can save her (name + photo).\nconst media_url = ($json.template_id || '').includes('intro') && $env.EMMA_VCARD_URL ? $env.EMMA_VCARD_URL : null;\nreturn [{ json: { ...$json, content, media_url } }];"
       }
     },
     {
@@ -154,7 +154,8 @@
             "record_ref": "={{ $json.record_ref }}",
             "is_reply_to_inbound": "={{ false }}",
             "compliance_prevalidated": "={{ false }}",
-            "scheduled_at": "={{ $now.toISO() }}"
+            "scheduled_at": "={{ $now.toISO() }}",
+            "media_url": "={{ $json.media_url }}"
           }
         },
         "$comment": "Idempotency: the SB-06 key is correlation+recipient+content; correlation embeds record id + run — a re-run the same day re-attempts, but last_outbound_date (stamped by SB-06) excludes the lead from the eligibility query, satisfying 'no prior same outreach'."

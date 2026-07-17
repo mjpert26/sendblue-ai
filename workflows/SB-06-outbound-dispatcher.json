@@ -61,6 +61,10 @@
             {
               "name": "record_state_json",
               "type": "string"
+            },
+            {
+              "name": "media_url",
+              "type": "string"
             }
           ]
         }
@@ -297,7 +301,7 @@
         "url": "={{ $env.SENDBLUE_API_BASE_URL }}/send-message",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ (() => { const j = $('Evaluate All Send Guards').first().json; const body = { number: j.to_number, content: j.content, from_number: $env.SENDBLUE_FROM_NUMBER, status_callback: ($env.N8N_WEBHOOK_BASE_URL || '') + '/webhook/sendblue/status' }; if (j.seat_id) body[j.seat_param] = j.seat_id; return JSON.stringify(body); })() }}",
+        "jsonBody": "={{ (() => { const j = $('Evaluate All Send Guards').first().json; const body = { number: j.to_number, content: j.content, from_number: $env.SENDBLUE_FROM_NUMBER, status_callback: ($env.N8N_WEBHOOK_BASE_URL || '') + '/webhook/sendblue/status' }; if (j.seat_id) body[j.seat_param] = j.seat_id; if (j.media_url) body.media_url = j.media_url; return JSON.stringify(body); })() }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
