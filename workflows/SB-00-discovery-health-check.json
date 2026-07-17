@@ -80,7 +80,7 @@
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/v2/lines",
+        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/lines",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {
@@ -141,7 +141,7 @@
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/v2/webhooks",
+        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/account/webhooks",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "options": {

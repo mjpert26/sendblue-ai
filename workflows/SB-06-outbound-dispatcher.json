@@ -298,7 +298,7 @@
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/send-message",
+        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/send-message",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ (() => { const j = $('Evaluate All Send Guards').first().json; const body = { number: j.to_number, content: j.content, from_number: $env.SENDBLUE_FROM_NUMBER, status_callback: ($env.N8N_WEBHOOK_BASE_URL || '') + '/webhook/sendblue/status' }; if (j.seat_id) body[j.seat_param] = j.seat_id; if (j.media_url) body.media_url = j.media_url; return JSON.stringify(body); })() }}",
