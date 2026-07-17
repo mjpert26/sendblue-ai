@@ -352,7 +352,7 @@
         460
       ],
       "parameters": {
-        "jsCode": "// Resume requires the shared RESUME_AUTH_TOKEN and an operator identity.\n// Rechecks (opt-out, consent, wrong number, global kill switch) run against\n// Salesforce in the next node; this node validates the request itself.\nconst body = $json.body || {};\nconst headers = $json.headers || {};\nconst token = headers['x-resume-token'] || body.token || '';\nconst expected = $env.RESUME_AUTH_TOKEN || '';\nlet ok = expected.length > 0 && token.length === expected.length;\nif (ok) { let d = 0; for (let i = 0; i < expected.length; i++) d |= expected.charCodeAt(i) ^ token.charCodeAt(i); ok = d === 0; }\nif (!ok) return [{ json: { authorized: false } }];\nif (!body.record_ref || !body.resumed_by) return [{ json: { authorized: false, reason: 'record_ref and resumed_by are required' } }];\nreturn [{ json: { authorized: true, record_ref: body.record_ref, recordObj: body.record_ref.split(':')[0], recordId: body.record_ref.split(':')[1], resumed_by: String(body.resumed_by).slice(0, 80), correlation_id: 'resume_' + Date.now().toString(36) } }];"
+        "jsCode": "// Resume requires the shared RESUME_AUTH_TOKEN and an operator identity.\n// Rechecks (opt-out, consent, wrong number, global kill switch) run against\n// Salesforce in the next node; this node validates the request itself.\nconst body = $json.body || {};\nconst headers = $json.headers || {};\nconst token = headers['x-resume-token'] || body.token || '';\nconst expected = $env.RESUME_AUTH_TOKEN || '';\nlet ok = expected.length > 0 && token.length === expected.length;\nif (ok) { let d = 0; for (let i = 0; i < expected.length; i++) d |= expected.charCodeAt(i) ^ token.charCodeAt(i); ok = d === 0; }\nif (!ok) return [{ json: { authorized: false } }];\nif (!body.record_ref || !body.resumed_by) return [{ json: { authorized: false, reason: 'record_ref and resumed_by are required' } }];\nconst recordObj = body.record_ref.split(':')[0];\nconst recordId = String(body.record_ref.split(':')[1] || '').replace(/[^A-Za-z0-9]/g, '');\nif (!/^[A-Za-z0-9]{15,18}$/.test(recordId) || !/^[A-Za-z]+$/.test(recordObj)) return [{ json: { authorized: false, reason: 'bad_record_ref' } }];\nconst mm = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {});\nconst flds = ['sms_opt_out','sms_consent','wrong_number','human_takeover'].map(k => mm[k]).filter(s => s && s.field !== 'UNMAPPED' && s.object === recordObj).map(s => s.field);\nconst recheck_soql = `SELECT Id${flds.length ? ', ' + flds.join(', ') : ''} FROM ${recordObj} WHERE Id = '${recordId}'`;\nreturn [{ json: { authorized: true, record_ref: body.record_ref, recordObj, recordId, recheck_soql, resumed_by: String(body.resumed_by).slice(0, 80), correlation_id: 'resume_' + Date.now().toString(36) } }];"
       }
     },
     {
@@ -419,7 +419,7 @@
           "parameters": [
             {
               "name": "q",
-              "value": "={{ (() => { const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const obj = $json.recordObj; const fields = ['sms_opt_out','sms_consent','wrong_number','human_takeover'].map(k => m[k]).filter(s => s && s.field !== 'UNMAPPED' && s.object === obj).map(s => s.field); return `SELECT Id${fields.length ? ', ' + fields.join(', ') : ''} FROM ${obj} WHERE Id = '${$json.recordId}'`; })() }}"
+              "value": "={{ $json.recheck_soql }}"
             }
           ]
         },
