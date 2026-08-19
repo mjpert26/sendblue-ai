@@ -159,6 +159,15 @@ inside workflow JSON). They mirror the repo's `.env.example`:
 | `MESSAGING_HOURS_START/END`, `MESSAGING_TIMEZONE` | Proactive-send window (A-17) | `09:00`/`20:00`, `America/New_York` |
 | `FOLLOWUP_MAX_ATTEMPTS` | Follow-up cap | `3` |
 | `APPLICATION_LINK_BASE_URL` | The only URL allowed in outbound text | placeholder |
+| `RESET_CONTROL_ENABLED` | Honour the `RESET` control word (testing only) | `false` |
+| `RESET_CONTROL_NUMBERS` | Comma-separated numbers allowed to send `RESET` | empty |
+
+`RESET` lets a tester clear conversation history without the message reaching
+the model — a meaningless message scores low confidence, which deterministically
+triggers a human handoff and mutes the assistant for that contact. Keep
+`RESET_CONTROL_ENABLED` at `false` in production so a customer cannot
+un-escalate themselves out of a handoff; an unpermitted `RESET` is handled as an
+ordinary message.
 
 API keys themselves live in n8n **credentials** (§2), not env vars. Restart
 n8n after changing environment variables so workflows pick them up.
