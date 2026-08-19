@@ -1,5 +1,5 @@
 {
-  "$comment": "Configurable qualification collection rules. If qualification_threshold is null, Emma collects approved fields and routes to a human WITHOUT declaring anyone qualified/unqualified.",
+  "$comment": "Configurable qualification collection rules. FAST PATH: Emma collects only the pre-link minimum over text, then sends the tokenized application link; the form collects the rest with chat answers prefilled. Widen 'collectable_fields' enabled flags to trade conversation length for text-collected data.",
   "version": "1.0.0",
   "collectable_fields": [
     {
@@ -12,7 +12,8 @@
       "key": "last_name",
       "question_hint": "last name",
       "priority": 6,
-      "enabled": true
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
     },
     {
       "key": "business_name",
@@ -24,25 +25,29 @@
       "key": "business_state",
       "question_hint": "state the business operates in",
       "priority": 7,
-      "enabled": true
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
     },
     {
       "key": "industry",
       "question_hint": "industry / what the business does",
       "priority": 5,
-      "enabled": true
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
     },
     {
       "key": "time_in_business_months",
       "question_hint": "how long in business",
       "priority": 4,
-      "enabled": true
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
     },
     {
       "key": "monthly_gross_revenue",
       "question_hint": "approximate monthly gross revenue",
       "priority": 3,
-      "enabled": true
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
     },
     {
       "key": "requested_amount",
@@ -54,14 +59,15 @@
       "key": "use_of_funds",
       "question_hint": "what the funds are for",
       "priority": 4,
-      "enabled": true
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
     },
     {
       "key": "funding_urgency",
       "question_hint": "how soon funds are needed",
       "priority": 5,
       "enabled": false,
-      "$note": "Disabled: UNMAPPED in salesforce-field-map — cannot persist, so collecting it causes re-asking."
+      "$note": "Disabled: UNMAPPED in salesforce-field-map \u2014 cannot persist, so collecting it causes re-asking."
     },
     {
       "key": "current_positions",
@@ -75,20 +81,21 @@
       "question_hint": "best time for a call",
       "priority": 8,
       "enabled": false,
-      "$note": "Disabled: UNMAPPED in salesforce-field-map — cannot persist, so collecting it causes re-asking."
+      "$note": "Disabled: UNMAPPED in salesforce-field-map \u2014 cannot persist, so collecting it causes re-asking."
     },
     {
       "key": "email",
       "question_hint": "email address",
       "priority": 6,
-      "enabled": true
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
     },
     {
       "key": "existing_relationship",
       "question_hint": "worked with us before",
       "priority": 10,
       "enabled": false,
-      "$note": "Disabled: UNMAPPED in salesforce-field-map — cannot persist, so collecting it causes re-asking."
+      "$note": "Disabled: UNMAPPED in salesforce-field-map \u2014 cannot persist, so collecting it causes re-asking."
     },
     {
       "key": "prior_funding_history",
@@ -113,12 +120,10 @@
     "account_login_credentials"
   ],
   "qualification_threshold": {
-    "$comment": "Set to null to disable auto-threshold behavior entirely.",
+    "$comment": "Set to null to disable auto-threshold behavior entirely. Met => Emma offers the application link; the form collects the remainder.",
     "required_fields": [
       "first_name",
       "business_name",
-      "time_in_business_months",
-      "monthly_gross_revenue",
       "requested_amount"
     ],
     "on_met": "send_application_link_and_notify_owner"
@@ -128,11 +133,23 @@
     "send_when_customer_asks": true,
     "max_sends_per_7_days": 2
   },
-  "one_question_at_a_time": true,
+  "one_question_at_a_time": false,
   "lead_creation_minimum": {
     "$comment": "Journey A: minimum before creating a Salesforce Lead. Phone comes from the message itself.",
     "require_legitimate_financing_intent": true,
     "required_fields": [],
     "spam_signals_block_creation": true
-  }
+  },
+  "$fast_path": {
+    "$comment": "Design note, not read by code. Conversation length == number of enabled collectable_fields, because Emma asks for missing_fields one at a time. Enabling a field costs one round trip over iMessage.",
+    "pre_link_fields": [
+      "first_name",
+      "business_name",
+      "requested_amount"
+    ],
+    "rationale": "No knockout thresholds are configured, so revenue and time-in-business are data capture rather than qualification gates. Moving them to the form shortens intake without losing a decision.",
+    "to_lengthen": "Re-enable a collectable field (e.g. monthly_gross_revenue) to have Emma ask for it before sending the link."
+  },
+  "max_questions_per_message": 2,
+  "$questions_per_message_note": "Emma may bundle up to this many closely-related questions in one message (e.g. business name + amount). Set to 1 to restore strict one-at-a-time behavior."
 }
