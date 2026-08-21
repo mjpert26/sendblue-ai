@@ -46,8 +46,8 @@
       "key": "monthly_gross_revenue",
       "question_hint": "approximate monthly gross revenue",
       "priority": 3,
-      "enabled": false,
-      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
+      "enabled": true,
+      "$note": "Highest value-per-question of the optional fields: what a rep wants before touching a lead, and the likely knockout criterion if thresholds are ever configured."
     },
     {
       "key": "requested_amount",
@@ -87,8 +87,8 @@
       "key": "email",
       "question_hint": "email address",
       "priority": 6,
-      "enabled": false,
-      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
+      "enabled": true,
+      "$note": "Funnel submissions are keyed on email (unique index), so collecting it in chat links the merchant's application to their existing record instead of creating a second one. Asked last, immediately before the link."
     },
     {
       "key": "existing_relationship",
@@ -124,7 +124,9 @@
     "required_fields": [
       "first_name",
       "business_name",
-      "requested_amount"
+      "requested_amount",
+      "monthly_gross_revenue",
+      "email"
     ],
     "on_met": "send_application_link_and_notify_owner"
   },
@@ -145,10 +147,12 @@
     "pre_link_fields": [
       "first_name",
       "business_name",
-      "requested_amount"
+      "requested_amount",
+      "monthly_gross_revenue",
+      "email"
     ],
-    "rationale": "No knockout thresholds are configured, so revenue and time-in-business are data capture rather than qualification gates. Moving them to the form shortens intake without losing a decision.",
-    "to_lengthen": "Re-enable a collectable field (e.g. monthly_gross_revenue) to have Emma ask for it before sending the link."
+    "rationale": "Five pre-link fields at up to two questions per message is roughly three exchanges. Revenue earns its question as the field reps most want. Email earns its question because funnel submissions are keyed on it. Everything else \u2014 industry, state, time in business, use of funds, last name \u2014 is entered on the form, where a keyboard beats a text thread.",
+    "to_lengthen": "Re-enable a collectable field to have Emma ask for it before sending the link. Each one costs roughly half a round trip at max_questions_per_message=2."
   },
   "max_questions_per_message": 2,
   "$questions_per_message_note": "Emma may bundle up to this many closely-related questions in one message (e.g. business name + amount). Set to 1 to restore strict one-at-a-time behavior."

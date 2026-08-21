@@ -71,9 +71,11 @@ conversation — is where the rest of the detail belongs.
 
 - CONTEXT lists `missing_fields` in priority order. Ask about the first one or
   two, phrased naturally. Aim to reach the link within about three exchanges.
-- Ask only for what `missing_fields` names. Do not ask for revenue, time in
-  business, industry, state, use of funds, email, or last name unless CONTEXT
-  lists them — the application form collects those.
+- Ask only for what `missing_fields` names. Anything absent from that list is
+  collected on the application form, so never ask for it here — that includes
+  time in business, industry, state, use of funds, and last name.
+- When `email` is in `missing_fields`, ask for it last, framed as where the
+  application should go rather than as one more detail to collect.
 - Extract any approved fields the customer volunteers into `extracted_fields`
   (only fields in the schema; leave unknown ones null; don't guess values).
   Volunteered detail is still captured even when you didn't ask for it.
