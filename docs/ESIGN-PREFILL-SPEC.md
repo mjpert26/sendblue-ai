@@ -1,4 +1,4 @@
-# ESign Prefill Integration — spec for esign.bigthinkcapital.com
+# ESign Prefill Integration — application.bigthinkcapital.com
 
 Emma sends qualified merchants a personalized application link. The link carries
 a random bearer token that resolves to the merchant's Salesforce Lead, so the
@@ -7,12 +7,21 @@ e-sign application opens **pre-filled** with everything collected in the chat.
 ## Link format Emma sends
 
 ```
-https://esign.bigthinkcapital.com/apply?t=<token>
+https://application.bigthinkcapital.com/apply?t=<token>
 ```
 
 - `token`: 48 lowercase hex chars, generated fresh each time Emma sends a link
 - Stored on the Lead (`Emma_ESign_Token__c`, unique external id) with a 30-day
   expiry (`Emma_ESign_Token_Expiry__c`). Re-sending a link rotates the token.
+
+## Implementation status
+
+Built and verified end to end (2026-08-21). The funnel calls a server-side proxy,
+`api/public/esign-prefill.js` in `bigthinkcapital/Esign-new`, which resolves the
+token against this endpoint via `EMMA_ESIGN_PREFILL_URL` and re-serves a
+whitelisted copy of the payload. `src/App.jsx` handles the `/apply?t=` route.
+The proxy adds per-IP rate limiting (30/min → `429 rate_limited`) and maps any
+non-2xx that is not 400/404/410 to `502 prefill_unavailable`.
 
 ## What the esign app implements
 
@@ -32,6 +41,7 @@ GET https://api.bigthinkcapital.com/webhook/emma/esign-prefill?t=<token>
 | 400 | `{"error":"invalid_token"}` | malformed token — render blank form |
 | 404 | `{"error":"token_not_found"}` | unknown/rotated token — render blank form |
 | 410 | `{"error":"token_expired"}` | >30 days old — render blank form (optionally show "ask Emma for a fresh link") |
+| 503 | `{"error":"prefill_unavailable"}` | lookup failed (Salesforce unreachable) — the token may be perfectly valid, so prefer "try again in a moment" over a blank form |
 
 ### 200 payload
 
@@ -52,6 +62,12 @@ GET https://api.bigthinkcapital.com/webhook/emma/esign-prefill?t=<token>
 ```
 
 Any field may be `null` (not yet collected in chat) — leave those inputs empty.
+
+Placeholder values are scrubbed to `null` before they leave this endpoint.
+Salesforce requires `LastName`, so intake writes `Unknown`, and `Industry` picks
+up an org-level default of `Other - Other`; prefilling either would force the
+merchant to notice and delete junk, which is worse than an empty field. The
+scrubbed set is configurable via `SF_PLACEHOLDER_VALUES`.
 
 ## Security properties
 

@@ -159,6 +159,7 @@ inside workflow JSON). They mirror the repo's `.env.example`:
 | `MESSAGING_HOURS_START/END`, `MESSAGING_TIMEZONE` | Proactive-send window (A-17) | `09:00`/`20:00`, `America/New_York` |
 | `FOLLOWUP_MAX_ATTEMPTS` | Follow-up cap | `3` |
 | `APPLICATION_LINK_BASE_URL` | The only URL allowed in outbound text | placeholder |
+| `SF_PLACEHOLDER_VALUES` | Values scrubbed to null in the prefill payload | `Unknown,Other - Other,Other,N/A,None,TBD` |
 | `RESET_CONTROL_ENABLED` | Honour the `RESET` control word (testing only) | `false` |
 | `RESET_CONTROL_NUMBERS` | Comma-separated numbers allowed to send `RESET` | empty |
 
