@@ -1,0 +1,342 @@
+{
+  "$comment": "RESOLVED field map for the Big Think Capital production org (schema/API names only — no customer data). Generated from live describe discovery 2026-07-10 + manual resolution. Fields marked CREATE_PENDING below must be created in Setup (specs in docs/SALESFORCE-SETUP.md and PR notes) — SB-00 stays RED until they exist. Paste this file's content into the n8n env var SF_FIELD_MAP_JSON.",
+  "version": "1.1.0",
+  "resolved_from_discovery": "2026-07-10",
+  "api_version": "v60.0",
+  "objects": {
+    "lead": "Lead",
+    "contact": "Contact",
+    "account": "Account",
+    "opportunity": "Opportunity",
+    "task": "Task",
+    "application_custom_object": "UNMAPPED",
+    "$application_note": "Org uses CS Broker Suite (csbs) — the 'deal' IS the Opportunity (13 record types); no separate application object. Submissions/offers/stips live in csbs__Submission__c / csbs__Offer__c / csbs__Stipulation__c and stay out of Emma's scope for now."
+  },
+  "mappings": {
+    "lead_id": {
+      "object": "Lead",
+      "field": "Id",
+      "required": true
+    },
+    "contact_id": {
+      "object": "Contact",
+      "field": "Id",
+      "required": true
+    },
+    "account_id": {
+      "object": "Account",
+      "field": "Id",
+      "required": false
+    },
+    "opportunity_id": {
+      "object": "Opportunity",
+      "field": "Id",
+      "required": false
+    },
+    "application_id": {
+      "object": "UNMAPPED",
+      "field": "UNMAPPED",
+      "required": false
+    },
+    "first_name": {
+      "object": "Lead",
+      "field": "FirstName",
+      "required": true
+    },
+    "last_name": {
+      "object": "Lead",
+      "field": "LastName",
+      "required": true
+    },
+    "mobile_phone": {
+      "object": "Lead",
+      "field": "MobilePhone",
+      "required": true
+    },
+    "phone": {
+      "object": "Lead",
+      "field": "Phone",
+      "required": true
+    },
+    "email": {
+      "object": "Lead",
+      "field": "Email",
+      "required": false
+    },
+    "business_name": {
+      "object": "Lead",
+      "field": "Company",
+      "required": true
+    },
+    "industry": {
+      "object": "Lead",
+      "field": "Industry",
+      "required": false
+    },
+    "business_state": {
+      "object": "Lead",
+      "field": "State",
+      "required": false
+    },
+    "time_in_business": {
+      "object": "Lead",
+      "field": "csbs__Time_in_Business__c",
+      "required": false,
+      "$note": "existing CS Broker Suite text field"
+    },
+    "monthly_gross_revenue": {
+      "object": "Lead",
+      "field": "csbs__Estimated_Monthly_Revenue__c",
+      "required": false,
+      "$note": "currency — chosen over csbs__Monthly_Revenue__c (string) for numeric extraction"
+    },
+    "requested_amount": {
+      "object": "Lead",
+      "field": "csbs__Amount_Requested__c",
+      "required": false,
+      "$note": "currency — chosen over Amount_Requested_Text__c"
+    },
+    "use_of_funds": {
+      "object": "Lead",
+      "field": "csbs__Use_of_Proceeds__c",
+      "required": false
+    },
+    "funding_urgency": {
+      "object": "Lead",
+      "field": "UNMAPPED",
+      "required": false,
+      "$note": "generator suggested How_Soon_Are_You_Looking_To_Access_Funds__c but that is a HELOC-form field — rejected; create Emma field later if needed"
+    },
+    "current_positions": {
+      "object": "Lead",
+      "field": "UNMAPPED",
+      "required": false,
+      "$note": "collection disabled in qualification-rules; Opportunity position fields are underwriting-owned"
+    },
+    "preferred_call_time": {
+      "object": "Lead",
+      "field": "UNMAPPED",
+      "required": false
+    },
+    "lead_source": {
+      "object": "Lead",
+      "field": "LeadSource",
+      "required": true
+    },
+    "record_owner": {
+      "object": "Lead",
+      "field": "OwnerId",
+      "required": true
+    },
+    "ai_enabled": {
+      "object": "Lead",
+      "field": "Emma_AI_Enabled__c",
+      "required": true,
+      "$note": "CREATE_PENDING — checkbox, default TRUE. Deliberately NOT Activate_Sendblue__c: that gates the existing managed-package autotext automation"
+    },
+    "human_takeover": {
+      "object": "Lead",
+      "field": "Emma_Human_Takeover__c",
+      "required": true,
+      "$note": "CREATE_PENDING — checkbox, default FALSE"
+    },
+    "sms_consent": {
+      "object": "Lead",
+      "field": "Sendblue_Consent__c",
+      "required": true,
+      "$note": "CREATE_PENDING — checkbox, default FALSE. Twilio Opt_In objects exist but are Twilio-scoped; Emma needs a record-level flag"
+    },
+    "consent_source": {
+      "object": "Lead",
+      "field": "Sendblue_Consent_Source__c",
+      "required": false,
+      "$note": "CREATE_PENDING — text(255)"
+    },
+    "consent_timestamp": {
+      "object": "Lead",
+      "field": "Sendblue_Consent_Timestamp__c",
+      "required": false,
+      "$note": "CREATE_PENDING — datetime"
+    },
+    "sms_opt_out": {
+      "object": "Lead",
+      "field": "Sendblue_Opt_Out__c",
+      "required": true,
+      "$note": "CREATE_PENDING — checkbox, default FALSE. Kept separate from Do_Not_Contact__c (broader, all-channel); see open decision #3"
+    },
+    "wrong_number": {
+      "object": "Lead",
+      "field": "Bad_Number__c",
+      "required": false,
+      "$note": "REUSED existing field"
+    },
+    "conversation_stage": {
+      "object": "Lead",
+      "field": "Emma_Conversation_Stage__c",
+      "required": false,
+      "$note": "CREATE_PENDING — text(60), optional but recommended"
+    },
+    "application_status": {
+      "object": "Opportunity",
+      "field": "StageName",
+      "required": false
+    },
+    "missing_item_status": {
+      "object": "UNMAPPED",
+      "field": "UNMAPPED",
+      "required": false,
+      "$note": "csbs__Stipulation__c exists but stip disclosure needs compliance review first — unmapped = Emma never details missing docs, only the approved category wording"
+    },
+    "application_link": {
+      "object": "Lead",
+      "field": "ESign_Application_Link__c",
+      "required": false,
+      "$note": "REUSED existing e-sign application link field"
+    },
+    "application_link_sent_date": {
+      "object": "Lead",
+      "field": "Emma_App_Link_Sent__c",
+      "required": false,
+      "$note": "CREATE_PENDING — datetime, optional (generator's Plaid_Link_Sent_At__c suggestion rejected — Plaid-specific)"
+    },
+    "appointment_status": {
+      "object": "Lead",
+      "field": "Meeting_Booked__c",
+      "required": false,
+      "$note": "REUSED existing checkbox; Meeting_booked_time__c holds the datetime"
+    },
+    "last_inbound_date": {
+      "object": "Lead",
+      "field": "Emma_Last_Inbound__c",
+      "required": false,
+      "$note": "CREATE_PENDING — datetime, optional but recommended (enables reply-cancels-followup at SF level)"
+    },
+    "last_outbound_date": {
+      "object": "Lead",
+      "field": "Emma_Last_Outbound__c",
+      "required": false,
+      "$note": "CREATE_PENDING — datetime, optional but recommended"
+    },
+    "followup_date": {
+      "object": "Lead",
+      "field": "Emma_Followup_Date__c",
+      "required": false,
+      "$note": "CREATE_PENDING — datetime, optional; without it SB-08 uses the Data Table fallback"
+    },
+    "followup_attempt": {
+      "object": "Lead",
+      "field": "Emma_Followup_Attempt__c",
+      "required": false,
+      "$note": "CREATE_PENDING — number(2,0), optional"
+    },
+    "handoff_reason": {
+      "object": "Lead",
+      "field": "Emma_Handoff_Reason__c",
+      "required": false,
+      "$note": "CREATE_PENDING — text(255), optional"
+    },
+    "ai_conversation_summary": {
+      "object": "Lead",
+      "field": "Chat_AI_Summary__c",
+      "required": false,
+      "$note": "REUSED existing AI chat summary textarea"
+    },
+    "sendblue_line": {
+      "object": "Lead",
+      "field": "UNMAPPED",
+      "required": false
+    },
+    "sendblue_bot_seat": {
+      "object": "Lead",
+      "field": "UNMAPPED",
+      "required": false
+    },
+    "sendblue_conversation_id": {
+      "object": "Lead",
+      "field": "UNMAPPED",
+      "required": false,
+      "$note": "sendblue__Conversation__c managed object exists; integrate later if needed"
+    },
+    "esign_token": {
+      "object": "Lead",
+      "field": "Emma_ESign_Token__c",
+      "required": false,
+      "$note": "bearer token appended to the e-sign application link; rotated on each send"
+    },
+    "esign_token_expiry": {
+      "object": "Lead",
+      "field": "Emma_ESign_Token_Expiry__c",
+      "required": false,
+      "$note": "prefill API refuses tokens past this time"
+    }
+  },
+  "mappings_contact": {
+    "first_name": {
+      "object": "Contact",
+      "field": "FirstName",
+      "required": false
+    },
+    "last_name": {
+      "object": "Contact",
+      "field": "LastName",
+      "required": false
+    },
+    "mobile_phone": {
+      "object": "Contact",
+      "field": "MobilePhone",
+      "required": false
+    },
+    "phone": {
+      "object": "Contact",
+      "field": "Phone",
+      "required": false
+    },
+    "email": {
+      "object": "Contact",
+      "field": "Email",
+      "required": false
+    }
+  },
+  "custom_phone_fields": [
+    "Cleaned_Phone_Number__c",
+    "tubl__TextUs_Phone__c"
+  ],
+  "timezone_field": {
+    "object": "Lead",
+    "field": "tz__Timezone_IANA__c",
+    "$note": "org has the Local Time (tz__) package — per-lead IANA timezone available for future per-customer quiet hours"
+  },
+  "extra_suppression_fields": {
+    "$comment": "Honored as additional suppression signals wherever fetched (recommended enhancement): if any is true, treat as suppressed even though sms_opt_out is Emma's primary flag.",
+    "fields": [
+      "Do_Not_Contact__c",
+      "Exclude_From_Prospecting_List__c"
+    ]
+  },
+  "lead_intake": {
+    "lead_source_value": "Sendblue AI",
+    "company_placeholder": "Unknown (Sendblue AI intake)",
+    "owner_routing": {
+      "mode": "default_owner",
+      "queue_or_owner_id": "UNMAPPED",
+      "$note": "org has SDR/ISO routing automations — confirm with RevOps which queue takes Emma-created leads (open decision #4)"
+    }
+  },
+  "conflict_rules": {
+    "default": "fill_empty_only",
+    "overrides": {
+      "ai_conversation_summary": "overwrite",
+      "last_inbound_date": "overwrite",
+      "last_outbound_date": "overwrite",
+      "conversation_stage": "overwrite"
+    }
+  },
+  "forbidden_automatic_actions": [
+    "convert_lead",
+    "change_owner",
+    "close_opportunity",
+    "approve_application",
+    "decline_application",
+    "change_underwriting_stage"
+  ]
+}

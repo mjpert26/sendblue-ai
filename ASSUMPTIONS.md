@@ -152,3 +152,7 @@ n8n Data Tables (technical state only: idempotency, locks, retries,
 dead-letter, config, FAQ cache, follow-up jobs, test results). No requirement
 was found that these cannot handle at this scale; if outbound volume grows
 past what per-item Data Table reads support, revisit (docs/ARCHITECTURE.md).
+
+## A-13: Sendblue mark-read payload shape
+
+The `POST /api/mark-read` endpoint is documented (\"Send read receipt\"), but the exact request body is not specified in the public quickstart. SB-04's \"Sendblue: Mark Read (fail-soft)\" node sends `{ number: <customer E.164>, from_number: <line E.164> }` and is wired fail-soft (`continueErrorOutput`, error branch unconnected) so a payload mismatch can never affect the reply flow. Verify the shape against docs.sendblue.com and adjust if reads don't appear.

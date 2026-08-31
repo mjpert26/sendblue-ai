@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>Lead.Emma_AI_Enabled__c</members>
+        <members>Lead.Emma_Human_Takeover__c</members>
+        <members>Lead.Sendblue_Consent__c</members>
+        <members>Lead.Sendblue_Opt_Out__c</members>
+        <members>Lead.Sendblue_Consent_Source__c</members>
+        <members>Lead.Sendblue_Consent_Timestamp__c</members>
+        <members>Lead.Emma_Conversation_Stage__c</members>
+        <members>Lead.Emma_Last_Inbound__c</members>
+        <members>Lead.Emma_Last_Outbound__c</members>
+        <members>Lead.Emma_Followup_Date__c</members>
+        <members>Lead.Emma_Followup_Attempt__c</members>
+        <members>Lead.Emma_Handoff_Reason__c</members>
+        <members>Lead.Emma_App_Link_Sent__c</members>
+        <name>CustomField</name>
+    </types>
+    <version>60.0</version>
+</Package>

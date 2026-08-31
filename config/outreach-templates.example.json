@@ -1,0 +1,4 @@
+{
+  "$comment": "Approved outbound first-touch templates (SB-02). {name}/{assistant_name}/{company_name} substituted at runtime. ALL WORDING PLACEHOLDER pending COMPLIANCE-REVIEW.md; cold outreach must retain the opt-out sentence.",
+  "outreach_intro_v1": "Hi{name} — it's {assistant_name} from {company_name}. You recently inquired about funding for your business, and I can help you explore options right here over text. When you're ready, just reply and we'll get started. Reply STOP to opt out."
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Emma_Last_Outbound__c</fullName>
+    <label>Emma Last Outbound</label>
+    <type>DateTime</type>
+    <required>false</required>
+    <description>Emma AI funding assistant field. Managed by the Sendblue-AI n8n workflows.</description>
+</CustomField>

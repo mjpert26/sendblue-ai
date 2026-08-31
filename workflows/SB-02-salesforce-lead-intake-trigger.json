@@ -4,35 +4,62 @@
     "workflowVersion": "1.0.0",
     "description": "Journey F: optional outreach to Salesforce-created leads. SHIPS DISABLED (workflow inactive + config outreach_journey_f.enabled=false). Lead existence is NOT consent (ASSUMPTIONS A-18): every send requires mapped consent fields, freshness, suppression checks, idempotency and messaging hours — then still passes the full SB-06 guard set."
   },
-  "settings": { "executionOrder": "v1", "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter" },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "__MAP_AFTER_IMPORT__:SB-10 Error Handler and Dead-Letter"
+  },
   "nodes": [
     {
       "id": "sb02-schedule",
       "name": "Every 30 Minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0],
-      "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 30 }] } }
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      }
     },
     {
       "id": "sb02-config",
       "name": "Read Kill Switches",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1,
-      "position": [200, 0],
+      "position": [
+        200,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "operation": "get",
-        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "agent_config" },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "agent_config"
+        },
         "returnAll": true
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "sb02-gate",
       "name": "Outreach Enabled Gate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [420, 0],
+      "position": [
+        420,
+        0
+      ],
       "parameters": {
         "jsCode": "// Triple gate: global kill switch + outbound + explicit Journey-F enable in policy.\nconst rows = $input.all().map(i => i.json).filter(r => r.key);\nconst cfg = {}; rows.forEach(r => { cfg[r.key] = r.value; });\nconst policy = JSON.parse($env.FOLLOWUP_POLICY_JSON || '{}');\nconst outreach = policy.outreach_journey_f || {};\nif (cfg.global_ai_enabled !== 'true' || cfg.outbound_enabled !== 'true' || outreach.enabled !== true) {\n  console.log(JSON.stringify({ level: 'info', workflow: 'SB-02', action: 'outreach_skipped', reason: outreach.enabled !== true ? 'journey_f_disabled_by_policy' : 'kill_switch', ts: new Date().toISOString() }));\n  return [];\n}\nreturn [{ json: { cfg, outreach, run_id: 'of_' + Date.now().toString(36) } }];"
       }
@@ -42,7 +69,10 @@
       "name": "Salesforce: Eligible Consented Leads",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [640, 0],
+      "position": [
+        640,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
@@ -50,21 +80,35 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "q", "value": "={{ (() => { const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const req = ['mobile_phone','sms_consent','consent_source','consent_timestamp','sms_opt_out','human_takeover','ai_enabled','last_outbound_date']; const f = {}; for (const k of req) { const s = m[k]; f[k] = s && s.field !== 'UNMAPPED' && s.object === 'Lead' ? s.field : null; } if (!f.sms_consent || !f.consent_source || !f.consent_timestamp || !f.mobile_phone) return 'SELECT Id FROM Lead WHERE Id = null'; const sel = ['Id','FirstName','CreatedDate', ...Object.values(f).filter(Boolean)]; const conds = [`${f.sms_consent} = true`, `${f.mobile_phone} != null`, f.sms_opt_out ? `${f.sms_opt_out} = false` : null, f.human_takeover ? `${f.human_takeover} = false` : null, f.ai_enabled ? `${f.ai_enabled} = true` : null, f.last_outbound_date ? `${f.last_outbound_date} = null` : null, `CreatedDate = LAST_N_DAYS:7`].filter(Boolean); return `SELECT ${[...new Set(sel)].join(', ')} FROM Lead WHERE ${conds.join(' AND ')} LIMIT 50`; })() }}" }
+            {
+              "name": "q",
+              "value": "={{ (() => { const m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {}); const req = ['mobile_phone','sms_consent','consent_source','consent_timestamp','sms_opt_out','human_takeover','ai_enabled','last_outbound_date']; const f = {}; for (const k of req) { const s = m[k]; f[k] = s && s.field !== 'UNMAPPED' && s.object === 'Lead' ? s.field : null; } if (!f.sms_consent || !f.consent_source || !f.consent_timestamp || !f.mobile_phone) return 'SELECT Id FROM Lead WHERE Id = null'; const sel = ['Id','FirstName','CreatedDate', ...Object.values(f).filter(Boolean)]; const conds = [`${f.sms_consent} = true`, `${f.mobile_phone} != null`, f.sms_opt_out ? `${f.sms_opt_out} = false` : null, f.human_takeover ? `${f.human_takeover} = false` : null, f.ai_enabled ? `${f.ai_enabled} = true` : null, f.last_outbound_date ? `${f.last_outbound_date} = null` : null, `CreatedDate = LAST_N_DAYS:7`].filter(Boolean); return `SELECT ${[...new Set(sel)].join(', ')} FROM Lead WHERE ${conds.join(' AND ')} LIMIT 50`; })() }}"
+            }
           ]
         },
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "timeout": 20000, "$comment": "Returns zero rows unless consent_source/consent_timestamp/sms_consent/mobile_phone are ALL mapped — unmapped consent means no outreach, ever." }
+        "options": {
+          "timeout": 20000,
+          "$comment": "Returns zero rows unless consent_source/consent_timestamp/sms_consent/mobile_phone are ALL mapped — unmapped consent means no outreach, ever."
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb02-validate",
       "name": "Validate Consent Per Lead",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [860, 0],
+      "position": [
+        860,
+        0
+      ],
       "parameters": {
         "jsCode": "// Enforces consent source whitelist, consent age, messaging hours and daily cap.\nconst gate = $('Outreach Enabled Gate').first().json;\nconst outreach = gate.outreach;\nconst m = (JSON.parse($env.SF_FIELD_MAP_JSON || '{}').mappings || {});\nconst fname = (k) => { const s = m[k]; return s && s.field !== 'UNMAPPED' && s.object === 'Lead' ? s.field : null; };\nlet records = [];\ntry { records = $('Salesforce: Eligible Consented Leads').first().json.records || []; } catch (e) { records = []; }\nconst req = outreach.requires || {};\nconst hours = { timezone: $env.MESSAGING_TIMEZONE || 'America/New_York', start: $env.MESSAGING_HOURS_START || '09:00', end: $env.MESSAGING_HOURS_END || '20:00', days: ['Mon','Tue','Wed','Thu','Fri','Sat'] };\nfunction withinHours(nowISO, h) { const now = new Date(nowISO); const fmt = new Intl.DateTimeFormat('en-US', { timeZone: h.timezone, hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit' }); const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value])); const hm = `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}`; if (h.days && !h.days.includes(parts.weekday)) return false; return hm >= h.start && hm < h.end; }\nif (!withinHours(new Date().toISOString(), hours)) { console.log(JSON.stringify({ level: 'info', workflow: 'SB-02', action: 'outreach_skipped', reason: 'outside_messaging_hours', ts: new Date().toISOString() })); return []; }\nconst cap = Number(outreach.daily_cap || 50);\nconst out = [];\nfor (const r of records.slice(0, cap)) {\n  const src = fname('consent_source') ? r[fname('consent_source')] : null;\n  const ts = fname('consent_timestamp') ? r[fname('consent_timestamp')] : null;\n  const allowedSources = req.consent_source_in || [];\n  if (allowedSources.length && !allowedSources.includes(src)) continue;\n  if (req.consent_max_age_days && (!ts || (Date.now() - new Date(ts).getTime()) > req.consent_max_age_days * 86400000)) continue;\n  const phoneRaw = r[fname('mobile_phone')];\n  const digits = String(phoneRaw || '').replace(/[^\\d+]/g, '');\n  const phone = /^\\+\\d{8,15}$/.test(digits) ? digits : (digits.replace(/\\D/g, '').length === 10 ? '+1' + digits.replace(/\\D/g, '') : null);\n  if (!phone) continue;\n  out.push({ json: { record_id: r.Id, record_ref: 'Lead:' + r.Id, phone, first_name: r.FirstName || null, correlation_id: gate.run_id + '_' + r.Id, template_id: outreach.template_id || 'outreach_intro_v1' } });\n}\nconsole.log(JSON.stringify({ level: 'info', workflow: 'SB-02', workflow_version: '1.0.0', action: 'outreach_batch', run_id: gate.run_id, eligible: out.length, ts: new Date().toISOString() }));\nreturn out;"
       }
@@ -74,9 +118,12 @@
       "name": "Compose Approved Outreach",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1080, 0],
+      "position": [
+        1080,
+        0
+      ],
       "parameters": {
-        "jsCode": "// Template comes from compliance-reviewed config only — never model-generated.\nconst templates = JSON.parse($env.OUTREACH_TEMPLATES_JSON || '{}');\nconst t = templates[$json.template_id];\nif (!t) { console.log(JSON.stringify({ level: 'warn', workflow: 'SB-02', correlation_id: $json.correlation_id, action: 'skipped_no_approved_template', template_id: $json.template_id, ts: new Date().toISOString() })); return []; }\nreturn [{ json: { ...$json, content: t.replace('{name}', $json.first_name ? ' ' + $json.first_name : '') } }];"
+        "jsCode": "// Template comes from compliance-reviewed config only — never model-generated.\nconst templates = JSON.parse($env.OUTREACH_TEMPLATES_JSON || '{}');\nconst t = templates[$json.template_id];\nif (!t) { console.log(JSON.stringify({ level: 'warn', workflow: 'SB-02', correlation_id: $json.correlation_id, action: 'skipped_no_approved_template', template_id: $json.template_id, ts: new Date().toISOString() })); return []; }\nconst content = t.replace('{name}', $json.first_name ? ' ' + $json.first_name : '')\n  .replaceAll('{assistant_name}', $env.ASSISTANT_NAME || 'Emma')\n  .replaceAll('{company_name}', $env.COMPANY_NAME || 'Big Think Capital');\n// First-touch messages carry Emma's contact card so the customer can save her (name + photo).\nconst media_url = ($json.template_id || '').includes('intro') && $env.EMMA_VCARD_URL ? $env.EMMA_VCARD_URL : null;\nreturn [{ json: { ...$json, content, media_url } }];"
       }
     },
     {
@@ -84,10 +131,18 @@
       "name": "Execute SB-06 Outbound Dispatcher",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [1300, 0],
+      "position": [
+        1300,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "workflowId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "SB-06 Outbound Dispatcher" },
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "SB-06 Outbound Dispatcher"
+        },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
@@ -99,7 +154,8 @@
             "record_ref": "={{ $json.record_ref }}",
             "is_reply_to_inbound": "={{ false }}",
             "compliance_prevalidated": "={{ false }}",
-            "scheduled_at": "={{ $now.toISO() }}"
+            "scheduled_at": "={{ $now.toISO() }}",
+            "media_url": "={{ $json.media_url }}"
           }
         },
         "$comment": "Idempotency: the SB-06 key is correlation+recipient+content; correlation embeds record id + run — a re-run the same day re-attempts, but last_outbound_date (stamped by SB-06) excludes the lead from the eligibility query, satisfying 'no prior same outreach'."
@@ -107,22 +163,91 @@
     }
   ],
   "connections": {
-    "Every 30 Minutes": { "main": [[{ "node": "Read Kill Switches", "type": "main", "index": 0 }]] },
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Kill Switches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Read Kill Switches": {
       "main": [
-        [{ "node": "Outreach Enabled Gate", "type": "main", "index": 0 }],
-        [{ "node": "Outreach Enabled Gate", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Outreach Enabled Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outreach Enabled Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Outreach Enabled Gate": { "main": [[{ "node": "Salesforce: Eligible Consented Leads", "type": "main", "index": 0 }]] },
+    "Outreach Enabled Gate": {
+      "main": [
+        [
+          {
+            "node": "Salesforce: Eligible Consented Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Salesforce: Eligible Consented Leads": {
       "main": [
-        [{ "node": "Validate Consent Per Lead", "type": "main", "index": 0 }],
-        [{ "node": "Validate Consent Per Lead", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Validate Consent Per Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Consent Per Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Validate Consent Per Lead": { "main": [[{ "node": "Compose Approved Outreach", "type": "main", "index": 0 }]] },
-    "Compose Approved Outreach": { "main": [[{ "node": "Execute SB-06 Outbound Dispatcher", "type": "main", "index": 0 }]] },
-    "Execute SB-06 Outbound Dispatcher": { "main": [[], []] }
+    "Validate Consent Per Lead": {
+      "main": [
+        [
+          {
+            "node": "Compose Approved Outreach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Approved Outreach": {
+      "main": [
+        [
+          {
+            "node": "Execute SB-06 Outbound Dispatcher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute SB-06 Outbound Dispatcher": {
+      "main": [
+        [],
+        []
+      ]
+    }
   }
 }

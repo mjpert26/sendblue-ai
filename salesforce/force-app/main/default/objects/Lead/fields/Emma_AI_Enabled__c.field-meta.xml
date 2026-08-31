@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Emma_AI_Enabled__c</fullName>
+    <label>Emma AI Enabled</label>
+    <type>Checkbox</type>
+    <defaultValue>true</defaultValue>
+    <description>Emma AI funding assistant control field. Managed by the Sendblue-AI n8n workflows.</description>
+    <inlineHelpText>Set/used by the Emma AI assistant. See sendblue-ai repo docs/SALESFORCE-SETUP.md.</inlineHelpText>
+</CustomField>

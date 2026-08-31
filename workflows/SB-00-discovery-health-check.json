@@ -5,14 +5,19 @@
     "description": "Manual, read-only environment verification. Produces a RED/YELLOW/GREEN report. Never sends a customer message.",
     "notes": "Data Table and sub-workflow references marked __MAP_AFTER_IMPORT__ must be re-pointed after import (docs/N8N-SETUP.md)."
   },
-  "settings": { "executionOrder": "v1" },
+  "settings": {
+    "executionOrder": "v1"
+  },
   "nodes": [
     {
       "id": "sb00-trigger",
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "parameters": {}
     },
     {
@@ -20,7 +25,10 @@
       "name": "Init Check Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 0],
+      "position": [
+        220,
+        0
+      ],
       "parameters": {
         "jsCode": "// Collect required configuration from env; each missing item is a finding.\nconst required = ['SENDBLUE_API_BASE_URL','SENDBLUE_FROM_NUMBER','SENDBLUE_WEBHOOK_SECRET','ANTHROPIC_MODEL','SLACK_HANDOFF_CHANNEL_ID','SLACK_ALERTS_CHANNEL_ID','APPLICATION_LINK_BASE_URL','MESSAGING_TIMEZONE'];\nconst findings = [];\nfor (const k of required) {\n  const v = $env[k];\n  if (!v || String(v).includes('__REPLACE_ME__')) findings.push({ level: 'red', check: 'env:' + k, detail: 'missing or placeholder' });\n}\nif (!$env.SENDBLUE_EMMA_SEAT_ID) findings.push({ level: 'yellow', check: 'env:SENDBLUE_EMMA_SEAT_ID', detail: 'no bot seat configured — outbound seat attribution disabled (ASSUMPTIONS A-05/A-06)' });\nreturn [{ json: { findings, started_at: new Date().toISOString() } }];"
       }
@@ -30,20 +38,32 @@
       "name": "Read Agent Config Table",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1,
-      "position": [440, 0],
+      "position": [
+        440,
+        0
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "operation": "get",
-        "dataTableId": { "__rl": true, "mode": "list", "value": "__MAP_AFTER_IMPORT__", "cachedResultName": "agent_config" },
+        "dataTableId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "__MAP_AFTER_IMPORT__",
+          "cachedResultName": "agent_config"
+        },
         "returnAll": true
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "sb00-configcheck",
       "name": "Verify Config + Kill Switch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 0],
+      "position": [
+        660,
+        0
+      ],
       "parameters": {
         "jsCode": "// Verify required agent_config keys exist and report kill-switch status.\nconst ctx = $('Init Check Context').first().json;\nconst rows = $input.all().map(i => i.json);\nconst findings = [...ctx.findings];\nconst cfg = {}; rows.forEach(r => { if (r.key) cfg[r.key] = r.value; });\nconst requiredKeys = ['global_ai_enabled','outbound_enabled','followups_enabled','status_lookup_enabled','test_mode','assistant_name','rate_limit_per_minute','test_allowlist_numbers'];\nfor (const k of requiredKeys) if (cfg[k] === undefined) findings.push({ level: 'red', check: 'agent_config:' + k, detail: 'missing key (seed from data-tables/seed-data.example.json)' });\nif (rows.length === 0) findings.push({ level: 'red', check: 'agent_config', detail: 'table unreadable or empty — re-map Data Table node after import' });\nfindings.push({ level: 'info', check: 'kill_switch', detail: `global_ai_enabled=${cfg.global_ai_enabled ?? 'MISSING'} outbound_enabled=${cfg.outbound_enabled ?? 'MISSING'} test_mode=${cfg.test_mode ?? 'MISSING'}` });\nif (cfg.test_mode === 'false' && $env.ALLOW_REAL_SEND !== 'true') findings.push({ level: 'red', check: 'send_gate', detail: 'test_mode=false but ALLOW_REAL_SEND!=true — sends will all fail closed' });\nreturn [{ json: { findings, config: cfg } }];"
       }
@@ -53,123 +73,352 @@
       "name": "Sendblue: Get Lines",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, -120],
+      "position": [
+        880,
+        -120
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/v2/lines",
+        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/lines",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "response": { "response": { "fullResponse": true, "neverError": false } } }
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false
+            }
+          }
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb00-sbseats",
       "name": "Sendblue: Get Seats",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 60],
+      "position": [
+        880,
+        60
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
         "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/v2/seats",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "response": { "response": { "fullResponse": true } } }
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb00-sbwebhooks",
       "name": "Sendblue: Get Webhooks",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 240],
+      "position": [
+        880,
+        240
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/v2/webhooks",
+        "url": "={{ $env.SENDBLUE_API_BASE_URL }}/api/account/webhooks",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
-        "options": { "response": { "response": { "fullResponse": true } } }
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
       },
-      "credentials": { "httpHeaderAuth": { "id": "__PLACEHOLDER__", "name": "Sendblue API (Header Auth) [placeholder]" } }
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PLACEHOLDER__",
+          "name": "Sendblue API (Header Auth) [placeholder]"
+        }
+      }
     },
     {
       "id": "sb00-sf",
       "name": "Salesforce: Describe Lead",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 420],
+      "position": [
+        880,
+        420
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "GET",
         "url": "={{ $env.SF_INSTANCE_URL }}/services/data/{{ $env.SF_API_VERSION || 'v61.0' }}/sobjects/Lead/describe/",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "salesforceOAuth2Api",
-        "options": { "response": { "response": { "fullResponse": true } } }
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
       },
-      "credentials": { "salesforceOAuth2Api": { "id": "__PLACEHOLDER__", "name": "Salesforce OAuth2 [placeholder]" } }
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "__PLACEHOLDER__",
+          "name": "Salesforce OAuth2 [placeholder]"
+        }
+      }
     },
     {
       "id": "sb00-slack",
       "name": "Slack: Auth Check",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [880, 600],
+      "position": [
+        880,
+        600
+      ],
       "onError": "continueErrorOutput",
       "parameters": {
         "method": "POST",
         "url": "https://slack.com/api/auth.test",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "slackApi",
-        "options": { "response": { "response": { "fullResponse": true } } }
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
       },
-      "credentials": { "slackApi": { "id": "__PLACEHOLDER__", "name": "Slack API [placeholder]" } }
+      "credentials": {
+        "slackApi": {
+          "id": "__PLACEHOLDER__",
+          "name": "Slack API [placeholder]"
+        }
+      }
     },
     {
       "id": "sb00-merge",
       "name": "Merge Probe Results",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [1100, 240],
-      "parameters": { "mode": "append", "numberInputs": 5 }
+      "position": [
+        1100,
+        240
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 5
+      }
     },
     {
       "id": "sb00-report",
       "name": "Build RED/YELLOW/GREEN Report",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 240],
+      "position": [
+        1320,
+        240
+      ],
       "parameters": {
         "jsCode": "// Aggregate probe outcomes into a single traffic-light report. Read-only; never messages customers.\nconst base = $('Verify Config + Kill Switch').first().json;\nconst findings = [...base.findings];\nconst probes = [\n  { name: 'sendblue_lines', node: 'Sendblue: Get Lines', red: true },\n  { name: 'sendblue_seats', node: 'Sendblue: Get Seats', red: false },\n  { name: 'sendblue_webhooks', node: 'Sendblue: Get Webhooks', red: false },\n  { name: 'salesforce_describe', node: 'Salesforce: Describe Lead', red: true },\n  { name: 'slack_auth', node: 'Slack: Auth Check', red: true }\n];\nconst items = $input.all().map(i => i.json);\nfor (const p of probes) {\n  let out = null;\n  try { out = $(p.node).first().json; } catch (e) { out = null; }\n  const status = out && (out.statusCode || out.status);\n  const ok = status >= 200 && status < 300;\n  if (!ok) findings.push({ level: p.red ? 'red' : 'yellow', check: p.name, detail: `probe failed (HTTP ${status ?? 'error'})` });\n  else findings.push({ level: 'info', check: p.name, detail: 'OK' });\n  if (p.name === 'sendblue_lines' && ok) {\n    const body = out.body || out;\n    const lines = JSON.stringify(body);\n    if ($env.SENDBLUE_FROM_NUMBER && !lines.includes(String($env.SENDBLUE_FROM_NUMBER))) {\n      findings.push({ level: 'red', check: 'from_number', detail: 'SENDBLUE_FROM_NUMBER not found among account lines' });\n    }\n  }\n  if (p.name === 'sendblue_seats' && ok && $env.SENDBLUE_EMMA_SEAT_ID) {\n    const seats = JSON.stringify(out.body || out);\n    if (!seats.includes(String($env.SENDBLUE_EMMA_SEAT_ID))) findings.push({ level: 'yellow', check: 'emma_seat', detail: 'configured SENDBLUE_EMMA_SEAT_ID not found in seats response' });\n  }\n  if (p.name === 'sendblue_webhooks' && ok) {\n    const hooks = JSON.stringify(out.body || out);\n    if (!hooks.includes('/webhook/sendblue/inbound')) findings.push({ level: 'yellow', check: 'inbound_webhook', detail: 'receive webhook for /webhook/sendblue/inbound not registered yet (docs/SENDBLUE-SETUP.md)' });\n  }\n  if (p.name === 'salesforce_describe' && ok) {\n    // Field-map verification: required logical mappings must not be UNMAPPED.\n    const mapRaw = $env.SF_FIELD_MAP_JSON;\n    if (!mapRaw) findings.push({ level: 'red', check: 'field_map', detail: 'SF_FIELD_MAP_JSON env not set — paste resolved config/salesforce-field-map.json (docs/N8N-SETUP.md)' });\n    else {\n      try {\n        const map = JSON.parse(mapRaw);\n        const fieldNames = ((out.body || out).fields || []).map(f => f.name);\n        for (const [k, s] of Object.entries(map.mappings || {})) {\n          if (s.required && (s.field === 'UNMAPPED' || s.object === 'UNMAPPED')) findings.push({ level: 'red', check: 'field_map:' + k, detail: 'required mapping UNMAPPED' });\n          else if (s.object === 'Lead' && s.field !== 'UNMAPPED' && fieldNames.length && !fieldNames.includes(s.field)) findings.push({ level: 'red', check: 'field_map:' + k, detail: `Lead.${s.field} does not exist in org` });\n        }\n      } catch (e) { findings.push({ level: 'red', check: 'field_map', detail: 'SF_FIELD_MAP_JSON is not valid JSON' }); }\n    }\n  }\n}\nconst reds = findings.filter(f => f.level === 'red');\nconst yellows = findings.filter(f => f.level === 'yellow');\nconst overall = reds.length ? 'RED' : yellows.length ? 'YELLOW' : 'GREEN';\nreturn [{ json: { overall, red_count: reds.length, yellow_count: yellows.length, findings, checked_at: new Date().toISOString() } }];"
       }
     }
   ],
   "connections": {
-    "Manual Trigger": { "main": [[{ "node": "Init Check Context", "type": "main", "index": 0 }]] },
-    "Init Check Context": { "main": [[{ "node": "Read Agent Config Table", "type": "main", "index": 0 }]] },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Init Check Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Check Context": {
+      "main": [
+        [
+          {
+            "node": "Read Agent Config Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Read Agent Config Table": {
       "main": [
-        [{ "node": "Verify Config + Kill Switch", "type": "main", "index": 0 }],
-        [{ "node": "Verify Config + Kill Switch", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Verify Config + Kill Switch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Verify Config + Kill Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Verify Config + Kill Switch": {
-      "main": [[
-        { "node": "Sendblue: Get Lines", "type": "main", "index": 0 },
-        { "node": "Sendblue: Get Seats", "type": "main", "index": 0 },
-        { "node": "Sendblue: Get Webhooks", "type": "main", "index": 0 },
-        { "node": "Salesforce: Describe Lead", "type": "main", "index": 0 },
-        { "node": "Slack: Auth Check", "type": "main", "index": 0 }
-      ]]
+      "main": [
+        [
+          {
+            "node": "Sendblue: Get Lines",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sendblue: Get Seats",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sendblue: Get Webhooks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Salesforce: Describe Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack: Auth Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Sendblue: Get Lines": { "main": [[{ "node": "Merge Probe Results", "type": "main", "index": 0 }], [{ "node": "Merge Probe Results", "type": "main", "index": 0 }]] },
-    "Sendblue: Get Seats": { "main": [[{ "node": "Merge Probe Results", "type": "main", "index": 1 }], [{ "node": "Merge Probe Results", "type": "main", "index": 1 }]] },
-    "Sendblue: Get Webhooks": { "main": [[{ "node": "Merge Probe Results", "type": "main", "index": 2 }], [{ "node": "Merge Probe Results", "type": "main", "index": 2 }]] },
-    "Salesforce: Describe Lead": { "main": [[{ "node": "Merge Probe Results", "type": "main", "index": 3 }], [{ "node": "Merge Probe Results", "type": "main", "index": 3 }]] },
-    "Slack: Auth Check": { "main": [[{ "node": "Merge Probe Results", "type": "main", "index": 4 }], [{ "node": "Merge Probe Results", "type": "main", "index": 4 }]] },
-    "Merge Probe Results": { "main": [[{ "node": "Build RED/YELLOW/GREEN Report", "type": "main", "index": 0 }]] }
+    "Sendblue: Get Lines": {
+      "main": [
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sendblue: Get Seats": {
+      "main": [
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Sendblue: Get Webhooks": {
+      "main": [
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 2
+          }
+        ],
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Salesforce: Describe Lead": {
+      "main": [
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 3
+          }
+        ],
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Slack: Auth Check": {
+      "main": [
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 4
+          }
+        ],
+        [
+          {
+            "node": "Merge Probe Results",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Merge Probe Results": {
+      "main": [
+        [
+          {
+            "node": "Build RED/YELLOW/GREEN Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   }
 }

@@ -1,44 +1,161 @@
 {
-  "$comment": "Configurable qualification collection rules. If qualification_threshold is null, Emma collects approved fields and routes to a human WITHOUT declaring anyone qualified/unqualified.",
+  "$comment": "Configurable qualification collection rules. FAST PATH: Emma collects only the pre-link minimum over text, then sends the tokenized application link; the form collects the rest with chat answers prefilled. Widen 'collectable_fields' enabled flags to trade conversation length for text-collected data.",
   "version": "1.0.0",
   "collectable_fields": [
-    { "key": "first_name", "question_hint": "first name", "priority": 1, "enabled": true },
-    { "key": "last_name", "question_hint": "last name", "priority": 6, "enabled": true },
-    { "key": "business_name", "question_hint": "business name", "priority": 2, "enabled": true },
-    { "key": "business_state", "question_hint": "state the business operates in", "priority": 7, "enabled": true },
-    { "key": "industry", "question_hint": "industry / what the business does", "priority": 5, "enabled": true },
-    { "key": "time_in_business_months", "question_hint": "how long in business", "priority": 4, "enabled": true },
-    { "key": "monthly_gross_revenue", "question_hint": "approximate monthly gross revenue", "priority": 3, "enabled": true },
-    { "key": "requested_amount", "question_hint": "how much funding they're seeking", "priority": 3, "enabled": true },
-    { "key": "use_of_funds", "question_hint": "what the funds are for", "priority": 4, "enabled": true },
-    { "key": "funding_urgency", "question_hint": "how soon funds are needed", "priority": 5, "enabled": true },
-    { "key": "current_positions", "question_hint": "current business-funding positions", "priority": 9, "enabled": false, "$comment": "enable only when approved" },
-    { "key": "preferred_call_time", "question_hint": "best time for a call", "priority": 8, "enabled": true },
-    { "key": "email", "question_hint": "email address", "priority": 6, "enabled": true },
-    { "key": "existing_relationship", "question_hint": "worked with us before", "priority": 10, "enabled": true },
-    { "key": "prior_funding_history", "question_hint": "prior business funding", "priority": 10, "enabled": false, "$comment": "enable only when approved" }
+    {
+      "key": "first_name",
+      "question_hint": "first name",
+      "priority": 1,
+      "enabled": true
+    },
+    {
+      "key": "last_name",
+      "question_hint": "last name",
+      "priority": 6,
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
+    },
+    {
+      "key": "business_name",
+      "question_hint": "business name",
+      "priority": 2,
+      "enabled": true
+    },
+    {
+      "key": "business_state",
+      "question_hint": "state the business operates in",
+      "priority": 7,
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
+    },
+    {
+      "key": "industry",
+      "question_hint": "industry / what the business does",
+      "priority": 5,
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
+    },
+    {
+      "key": "time_in_business_months",
+      "question_hint": "how long in business",
+      "priority": 4,
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
+    },
+    {
+      "key": "monthly_gross_revenue",
+      "question_hint": "approximate monthly gross revenue",
+      "priority": 3,
+      "enabled": true,
+      "$note": "Highest value-per-question of the optional fields: what a rep wants before touching a lead, and the likely knockout criterion if thresholds are ever configured."
+    },
+    {
+      "key": "requested_amount",
+      "question_hint": "how much funding they're seeking",
+      "priority": 3,
+      "enabled": true
+    },
+    {
+      "key": "use_of_funds",
+      "question_hint": "what the funds are for",
+      "priority": 4,
+      "enabled": false,
+      "$note": "Collected on the prefilled application form instead of over text. Emma asks only for pre-link fields; everything else is entered once, on a screen built for it, with chat-collected values already filled in."
+    },
+    {
+      "key": "funding_urgency",
+      "question_hint": "how soon funds are needed",
+      "priority": 5,
+      "enabled": false,
+      "$note": "Disabled: UNMAPPED in salesforce-field-map \u2014 cannot persist, so collecting it causes re-asking."
+    },
+    {
+      "key": "current_positions",
+      "question_hint": "current business-funding positions",
+      "priority": 9,
+      "enabled": false,
+      "$comment": "enable only when approved"
+    },
+    {
+      "key": "preferred_call_time",
+      "question_hint": "best time for a call",
+      "priority": 8,
+      "enabled": false,
+      "$note": "Disabled: UNMAPPED in salesforce-field-map \u2014 cannot persist, so collecting it causes re-asking."
+    },
+    {
+      "key": "email",
+      "question_hint": "email address",
+      "priority": 6,
+      "enabled": true,
+      "$note": "Funnel submissions are keyed on email (unique index), so collecting it in chat links the merchant's application to their existing record instead of creating a second one. Asked last, immediately before the link."
+    },
+    {
+      "key": "existing_relationship",
+      "question_hint": "worked with us before",
+      "priority": 10,
+      "enabled": false,
+      "$note": "Disabled: UNMAPPED in salesforce-field-map \u2014 cannot persist, so collecting it causes re-asking."
+    },
+    {
+      "key": "prior_funding_history",
+      "question_hint": "prior business funding",
+      "priority": 10,
+      "enabled": false,
+      "$comment": "enable only when approved"
+    }
   ],
   "never_collect_over_text": [
-    "ssn", "full_date_of_birth", "bank_username", "bank_password",
-    "full_bank_account_number", "full_routing_number", "card_number",
-    "authentication_code", "tax_documents", "drivers_license_image",
-    "unredacted_bank_statements", "account_login_credentials"
+    "ssn",
+    "full_date_of_birth",
+    "bank_username",
+    "bank_password",
+    "full_bank_account_number",
+    "full_routing_number",
+    "card_number",
+    "authentication_code",
+    "tax_documents",
+    "drivers_license_image",
+    "unredacted_bank_statements",
+    "account_login_credentials"
   ],
   "qualification_threshold": {
-    "$comment": "Set to null to disable auto-threshold behavior entirely.",
-    "required_fields": ["first_name", "business_name", "time_in_business_months", "monthly_gross_revenue", "requested_amount"],
+    "$comment": "Set to null to disable auto-threshold behavior entirely. Met => Emma offers the application link; the form collects the remainder.",
+    "required_fields": [
+      "first_name",
+      "business_name",
+      "requested_amount",
+      "monthly_gross_revenue",
+      "email"
+    ],
     "on_met": "send_application_link_and_notify_owner"
   },
   "application_link": {
     "send_when_threshold_met": true,
     "send_when_customer_asks": true,
-    "max_sends_per_7_days": 2
+    "max_sends_per_7_days": 2,
+    "max_sends_per_conversation": 2,
+    "$note": "max_sends_per_conversation is enforced in the SB-04 action gate by counting outbound messages in recent history that already carry the application URL. max_sends_per_7_days is NOT enforced \u2014 it needs a persisted counter that does not exist yet; the per-conversation cap covers the actual spam case."
   },
-  "one_question_at_a_time": true,
+  "one_question_at_a_time": false,
   "lead_creation_minimum": {
     "$comment": "Journey A: minimum before creating a Salesforce Lead. Phone comes from the message itself.",
     "require_legitimate_financing_intent": true,
     "required_fields": [],
     "spam_signals_block_creation": true
-  }
+  },
+  "$fast_path": {
+    "$comment": "Design note, not read by code. Conversation length == number of enabled collectable_fields, because Emma asks for missing_fields one at a time. Enabling a field costs one round trip over iMessage.",
+    "pre_link_fields": [
+      "first_name",
+      "business_name",
+      "requested_amount",
+      "monthly_gross_revenue",
+      "email"
+    ],
+    "rationale": "Five pre-link fields at up to two questions per message is roughly three exchanges. Revenue earns its question as the field reps most want. Email earns its question because funnel submissions are keyed on it. Everything else \u2014 industry, state, time in business, use of funds, last name \u2014 is entered on the form, where a keyboard beats a text thread.",
+    "to_lengthen": "Re-enable a collectable field to have Emma ask for it before sending the link. Each one costs roughly half a round trip at max_questions_per_message=2."
+  },
+  "max_questions_per_message": 2,
+  "$questions_per_message_note": "Emma may bundle up to this many closely-related questions in one message (e.g. business name + amount). Set to 1 to restore strict one-at-a-time behavior."
 }
