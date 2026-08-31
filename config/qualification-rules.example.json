@@ -133,7 +133,9 @@
   "application_link": {
     "send_when_threshold_met": true,
     "send_when_customer_asks": true,
-    "max_sends_per_7_days": 2
+    "max_sends_per_7_days": 2,
+    "max_sends_per_conversation": 2,
+    "$note": "max_sends_per_conversation is enforced in the SB-04 action gate by counting outbound messages in recent history that already carry the application URL. max_sends_per_7_days is NOT enforced \u2014 it needs a persisted counter that does not exist yet; the per-conversation cap covers the actual spam case."
   },
   "one_question_at_a_time": false,
   "lead_creation_minimum": {
