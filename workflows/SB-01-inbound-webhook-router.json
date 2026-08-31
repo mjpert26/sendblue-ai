@@ -38,7 +38,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// core-sync: 1.0.0 — secret comparison; header name configurable (ASSUMPTIONS A-03).\nconst headerName = ($env.SENDBLUE_WEBHOOK_SECRET_HEADER || 'sb-signing-secret').toLowerCase();\nconst expected = $env.SENDBLUE_WEBHOOK_SECRET || '';\nconst headers = $input.first().json.headers || {};\nconst got = headers[headerName] || headers[headerName.toUpperCase()] || '';\n// constant-time-ish comparison\nlet ok = expected.length > 0 && got.length === expected.length;\nif (ok) { let diff = 0; for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ got.charCodeAt(i); ok = diff === 0; }\nreturn [{ json: { ...$input.first().json, secret_valid: ok } }];"
+        "jsCode": "// core-sync: 1.0.0 \u2014 secret comparison; header name configurable (ASSUMPTIONS A-03).\nconst headerName = ($env.SENDBLUE_WEBHOOK_SECRET_HEADER || 'sb-signing-secret').toLowerCase();\nconst expected = $env.SENDBLUE_WEBHOOK_SECRET || '';\nconst headers = $input.first().json.headers || {};\nconst got = headers[headerName] || headers[headerName.toUpperCase()] || '';\n// constant-time-ish comparison\nlet ok = expected.length > 0 && got.length === expected.length;\nif (ok) { let diff = 0; for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ got.charCodeAt(i); ok = diff === 0; }\nreturn [{ json: { ...$input.first().json, secret_valid: ok } }];"
       }
     },
     {
@@ -115,7 +115,7 @@
         -120
       ],
       "parameters": {
-        "jsCode": "// core-sync: 1.0.0 — mirrors normalizePhone/phoneRef in scripts/lib/agent-core.mjs.\nfunction normalizePhone(raw, defaultCountry = 'US') {\n  if (raw === null || raw === undefined) return null;\n  const s = String(raw).trim(); if (!s) return null;\n  const digits = s.replace(/[^\\d+]/g, '');\n  if (/^\\+\\d{8,15}$/.test(digits)) return digits;\n  const bare = digits.replace(/\\D/g, '');\n  if (defaultCountry === 'US') { if (bare.length === 10) return `+1${bare}`; if (bare.length === 11 && bare.startsWith('1')) return `+${bare}`; }\n  if (bare.length >= 8 && bare.length <= 15) return `+${bare}`;\n  return null;\n}\nfunction phoneRef(e164) { if (!e164) return null; let h = 5381; for (let i = 0; i < e164.length; i++) h = ((h << 5) + h + e164.charCodeAt(i)) >>> 0; return `ph_${h.toString(16)}${e164.slice(-2)}`; }\nconst body = $json.body || $json;\n// Preserve documented Sendblue receive-webhook fields; unknown fields pass through under raw.\nconst isOutbound = body.is_outbound === true || String(body.is_outbound) === 'true';\nconst msg = {\n  message_handle: body.message_handle || null,\n  content: body.content ?? '',\n  media_url: body.media_url || null,\n  is_outbound: isOutbound,\n  service: body.service || null,\n  status: body.status || null,\n  from_number: normalizePhone(body.from_number || body.number),\n  to_number: normalizePhone(body.to_number),\n  sendblue_line: normalizePhone(body.to_number) || null,\n  group_id: body.group_id || null,\n  participants: body.participants || null,\n  date_sent: body.date_sent || body.date_created || null,\n  opted_out: body.opted_out === true,\n  was_downgraded: body.was_downgraded ?? null\n};\nconst correlation_id = `emma_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;\nconst customer_number = msg.is_outbound ? msg.to_number : msg.from_number;\nreturn [{ json: {\n  correlation_id,\n  workflow: 'SB-01', workflow_version: '1.0.0',\n  message: msg,\n  customer_number,\n  customer_ref: phoneRef(customer_number),\n  has_media: !!msg.media_url,\n  drop: msg.is_outbound ? 'outbound_event_on_inbound_endpoint' : (!msg.message_handle ? 'missing_message_handle' : (!customer_number ? 'unparseable_number' : null))\n} }];"
+        "jsCode": "// core-sync: 1.0.0 \u2014 mirrors normalizePhone/phoneRef in scripts/lib/agent-core.mjs.\nfunction normalizePhone(raw, defaultCountry = 'US') {\n  if (raw === null || raw === undefined) return null;\n  const s = String(raw).trim(); if (!s) return null;\n  const digits = s.replace(/[^\\d+]/g, '');\n  if (/^\\+\\d{8,15}$/.test(digits)) return digits;\n  const bare = digits.replace(/\\D/g, '');\n  if (defaultCountry === 'US') { if (bare.length === 10) return `+1${bare}`; if (bare.length === 11 && bare.startsWith('1')) return `+${bare}`; }\n  if (bare.length >= 8 && bare.length <= 15) return `+${bare}`;\n  return null;\n}\nfunction phoneRef(e164) { if (!e164) return null; let h = 5381; for (let i = 0; i < e164.length; i++) h = ((h << 5) + h + e164.charCodeAt(i)) >>> 0; return `ph_${h.toString(16)}${e164.slice(-2)}`; }\nconst body = $json.body || $json;\n// Preserve documented Sendblue receive-webhook fields; unknown fields pass through under raw.\nconst isOutbound = body.is_outbound === true || String(body.is_outbound) === 'true';\nconst msg = {\n  message_handle: body.message_handle || null,\n  content: body.content ?? '',\n  media_url: body.media_url || null,\n  is_outbound: isOutbound,\n  service: body.service || null,\n  status: body.status || null,\n  from_number: normalizePhone(body.from_number || body.number),\n  to_number: normalizePhone(body.to_number),\n  sendblue_line: normalizePhone(body.to_number) || null,\n  group_id: body.group_id || null,\n  participants: body.participants || null,\n  date_sent: body.date_sent || body.date_created || null,\n  opted_out: body.opted_out === true,\n  was_downgraded: body.was_downgraded ?? null\n};\n// LINE SCOPE: the Sendblue webhook is account-wide, so traffic for every line on\n// the account arrives here. Only messages on a configured assistant line may be\n// processed. Dropped here, ahead of the dedupe claim, so off-line traffic never\n// consumes a processed_messages row.\nconst allowedLines = String($env.SENDBLUE_ALLOWED_LINES || '').split(',').map(s => s.trim()).filter(Boolean);\nconst onAllowedLine = allowedLines.length === 0 || (msg.sendblue_line && allowedLines.includes(msg.sendblue_line));\n// Identifiers are interpolated into SQL, so the one value from an external source\n// is reduced to an id-shaped charset before it gets near a query.\nconst safeId = (v) => String(v || '').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 128);\n// Stamped now, in the business timezone, so out-of-hours coverage stays\n// queryable later without re-deriving it from UTC timestamps.\nlet afterHours = false, isWeekend = false;\ntry {\n  const tz = $env.MESSAGING_TIMEZONE || 'America/New_York';\n  const f = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hour12: false, weekday: 'short' });\n  const parts = Object.fromEntries(f.formatToParts(new Date()).map(p => [p.type, p.value]));\n  const hour = parseInt(parts.hour, 10);\n  const startH = parseInt(String($env.MESSAGING_HOURS_START || '08:00').split(':')[0], 10);\n  const endH = parseInt(String($env.MESSAGING_HOURS_END || '21:00').split(':')[0], 10);\n  afterHours = !(hour >= startH && hour < endH);\n  isWeekend = ['Sat', 'Sun'].includes(parts.weekday);\n} catch (e) {}\nconst correlation_id = `emma_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;\nconst customer_number = msg.is_outbound ? msg.to_number : msg.from_number;\nreturn [{ json: {\n  correlation_id,\n  workflow: 'SB-01', workflow_version: '1.0.0',\n  message: msg,\n  customer_number,\n  customer_ref: phoneRef(customer_number),\n  has_media: !!msg.media_url,\n  drop: msg.is_outbound ? 'outbound_event_on_inbound_endpoint' : (!msg.message_handle ? 'missing_message_handle' : (!customer_number ? 'unparseable_number' : (!onAllowedLine ? 'off_line' : null))),\n  sendblue_line: msg.sendblue_line,\n  handle_safe: safeId(msg.message_handle),\n  after_hours: afterHours,\n  is_weekend: isWeekend\n} }];"
       }
     },
     {
@@ -164,33 +164,22 @@
     {
       "id": "sb01-dedupe-insert",
       "name": "Dedupe: Claim Message Handle",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
       "position": [
         1200,
         -120
       ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "operation": "insert",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "__MAP_AFTER_IMPORT__",
-          "cachedResultName": "processed_messages"
-        },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "message_handle": "={{ $json.message.message_handle }}",
-            "correlation_id": "={{ $json.correlation_id }}",
-            "normalized_phone_hash": "={{ $json.customer_ref }}",
-            "processed_at": "={{ $now.toISO() }}",
-            "outcome": "processing"
-          }
-        },
-        "options": {
-          "$comment": "message_handle column must be UNIQUE so a duplicate webhook retry fails this insert and routes to the duplicate branch."
+        "operation": "executeQuery",
+        "query": "-- Atomic dedupe claim. The primary key does the work: a redelivered webhook\n-- violates it, the node takes its error output, and the duplicate is logged.\n-- The event row is written in the same statement so it is recorded only when\n-- the claim actually wins.\nWITH claimed AS (\n  INSERT INTO processed_messages (message_handle, correlation_id, normalized_phone_hash, outcome)\n  VALUES ('{{ $json.handle_safe }}', '{{ $json.correlation_id }}', '{{ $json.customer_ref }}', 'processing')\n  RETURNING message_handle\n)\nINSERT INTO conversation_events (correlation_id, contact_ref, event_type, after_hours, is_weekend)\nSELECT '{{ $json.correlation_id }}', '{{ $json.customer_ref }}', 'inbound_received', {{ $json.after_hours }}, {{ $json.is_weekend }}\nFROM claimed\nRETURNING event_id;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__MAP_AFTER_IMPORT__",
+          "name": "Emma Postgres [placeholder]"
         }
       }
     },
@@ -239,7 +228,7 @@
         -120
       ],
       "parameters": {
-        "jsCode": "// core-sync: 1.0.0 — mirrors detectOptOut/detectWrongNumber/detectSensitive in scripts/lib/agent-core.mjs.\n// Runs BEFORE any Claude call. Fail-safe: config unreadable => treat global_ai_enabled=false.\nconst src = $('Normalize Payload').first().json;\nconst rows = $input.all().map(i => i.json).filter(r => r.key);\nconst cfg = {}; rows.forEach(r => { cfg[r.key] = r.value; });\nconst globalOn = cfg.global_ai_enabled === 'true';\nconst OPT_OUT_RULES = { exact_phrases: ['stop','unsubscribe','cancel','opt out','optout','remove me','stop texting','stop messaging me','do not text me',\"don't text me\",'no more texts','leave me alone','take me off your list','i never signed up'], natural_language_patterns: ['stop (contacting|texting|messaging|calling) me',\"(don'?t|do not) (text|message|contact) me( again| anymore)?\",'take me off (the|your) list','remove (me|my number)','quit texting'] };\nconst WRONG_RULES = { patterns: ['wrong number','wrong person','you have the wrong',\"who is this\\\\? i never\",\"i'?m not [a-z]+, wrong\"] };\nconst SENSITIVE = { ssn: '\\\\b\\\\d{3}[- ]?\\\\d{2}[- ]?\\\\d{4}\\\\b', card_number: '\\\\b(?:\\\\d[ -]*?){13,19}\\\\b', routing_number_context: '(routing|aba)[^\\\\d]{0,20}\\\\d{9}\\\\b', account_number_context: '(account|acct)[^\\\\d]{0,20}\\\\d{6,17}\\\\b', credentials: '(password|passcode|pin)\\\\s*[:=]?\\\\s*\\\\S+', dob: '\\\\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\\\\d|3[01])[/-](19|20)\\\\d{2}\\\\b' };\nconst NEG = /(don'?t|do not|never|please don'?t|no need to)\\s+(?:\\w+\\s+){0,3}$/i;\nfunction detectOptOut(message, rules) {\n  const text = String(message || '').toLowerCase().trim(); if (!text) return { optOut: false };\n  const stripped = text.replace(/[!.?,;:'\"()\\s]+$/g, '').replace(/^[!.?,;:'\"()\\s]+/g, '');\n  for (const phrase of rules.exact_phrases) { const p = phrase.toLowerCase();\n    if (stripped === p) return { optOut: true, matched: phrase };\n    const idx = text.indexOf(p);\n    if (idx >= 0) { const before = text.slice(0, idx); const after = text.slice(idx + p.length);\n      const sb = before === '' || /[.!?;\\n]\\s*$/.test(before); const sa = after === '' || /^[\\s.!?;,]/.test(after);\n      const singleWord = !p.includes(' ');\n      if (!NEG.test(before) && sb && sa && !singleWord) return { optOut: true, matched: phrase }; } }\n  for (const pattern of rules.natural_language_patterns) { let re; try { re = new RegExp(pattern, 'i'); } catch { continue; }\n    const m = text.match(re); if (m && !NEG.test(text.slice(0, m.index))) return { optOut: true, matched: pattern }; }\n  return { optOut: false };\n}\nfunction detectPatterns(message, patterns) { const t = String(message || '').toLowerCase(); for (const p of patterns) { let re; try { re = new RegExp(p, 'i'); } catch { continue; } if (re.test(t)) return true; } return false; }\nconst content = src.message.content || '';\nconst optOut = src.message.opted_out ? { optOut: true, matched: 'sendblue_opted_out_flag' } : detectOptOut(content, OPT_OUT_RULES);\nconst wrongNumber = detectPatterns(content, WRONG_RULES.patterns);\nconst sensitiveHits = Object.entries(SENSITIVE).filter(([, p]) => { try { return new RegExp(p, 'i').test(content); } catch { return false; } }).map(([k]) => k);\n// TEST-MODE ALLOWLIST GATE: while test_mode=true, only allowlisted numbers are processed at all.\n// Non-allowlisted senders are silently suppressed BEFORE any typing indicator, Claude call, or Salesforce write.\nconst testMode = cfg.test_mode !== 'false';\nconst testAllowlist = String(cfg.test_allowlist_numbers || '').split(',').map(s => s.trim()).filter(Boolean);\nconst allowlisted = testAllowlist.includes(src.customer_number);\nlet route = 'process';\nif (testMode && !allowlisted) route = 'kill_switch_off';\nelse if (optOut.optOut) route = 'opt_out'; else if (wrongNumber) route = 'wrong_number'; else if (!globalOn) route = 'kill_switch_off';\nreturn [{ json: { ...src, config: cfg, global_ai_enabled: globalOn, route, opt_out_matched: optOut.matched ?? null, sensitive_types: sensitiveHits, contains_sensitive: sensitiveHits.length > 0 } }];"
+        "jsCode": "// core-sync: 1.0.0 \u2014 mirrors detectOptOut/detectWrongNumber/detectSensitive in scripts/lib/agent-core.mjs.\n// Runs BEFORE any Claude call. Fail-safe: config unreadable => treat global_ai_enabled=false.\nconst src = $('Normalize Payload').first().json;\nconst rows = $input.all().map(i => i.json).filter(r => r.key);\nconst cfg = {}; rows.forEach(r => { cfg[r.key] = r.value; });\nconst globalOn = cfg.global_ai_enabled === 'true';\nconst OPT_OUT_RULES = { exact_phrases: ['stop','unsubscribe','cancel','opt out','optout','remove me','stop texting','stop messaging me','do not text me',\"don't text me\",'no more texts','leave me alone','take me off your list','i never signed up'], natural_language_patterns: ['stop (contacting|texting|messaging|calling) me',\"(don'?t|do not) (text|message|contact) me( again| anymore)?\",'take me off (the|your) list','remove (me|my number)','quit texting'] };\nconst WRONG_RULES = { patterns: ['wrong number','wrong person','you have the wrong',\"who is this\\\\? i never\",\"i'?m not [a-z]+, wrong\"] };\nconst SENSITIVE = { ssn: '\\\\b\\\\d{3}[- ]?\\\\d{2}[- ]?\\\\d{4}\\\\b', card_number: '\\\\b(?:\\\\d[ -]*?){13,19}\\\\b', routing_number_context: '(routing|aba)[^\\\\d]{0,20}\\\\d{9}\\\\b', account_number_context: '(account|acct)[^\\\\d]{0,20}\\\\d{6,17}\\\\b', credentials: '(password|passcode|pin)\\\\s*[:=]?\\\\s*\\\\S+', dob: '\\\\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\\\\d|3[01])[/-](19|20)\\\\d{2}\\\\b' };\nconst NEG = /(don'?t|do not|never|please don'?t|no need to)\\s+(?:\\w+\\s+){0,3}$/i;\nfunction detectOptOut(message, rules) {\n  const text = String(message || '').toLowerCase().trim(); if (!text) return { optOut: false };\n  const stripped = text.replace(/[!.?,;:'\"()\\s]+$/g, '').replace(/^[!.?,;:'\"()\\s]+/g, '');\n  for (const phrase of rules.exact_phrases) { const p = phrase.toLowerCase();\n    if (stripped === p) return { optOut: true, matched: phrase };\n    const idx = text.indexOf(p);\n    if (idx >= 0) { const before = text.slice(0, idx); const after = text.slice(idx + p.length);\n      const sb = before === '' || /[.!?;\\n]\\s*$/.test(before); const sa = after === '' || /^[\\s.!?;,]/.test(after);\n      const singleWord = !p.includes(' ');\n      if (!NEG.test(before) && sb && sa && !singleWord) return { optOut: true, matched: phrase }; } }\n  for (const pattern of rules.natural_language_patterns) { let re; try { re = new RegExp(pattern, 'i'); } catch { continue; }\n    const m = text.match(re); if (m && !NEG.test(text.slice(0, m.index))) return { optOut: true, matched: pattern }; }\n  return { optOut: false };\n}\nfunction detectPatterns(message, patterns) { const t = String(message || '').toLowerCase(); for (const p of patterns) { let re; try { re = new RegExp(p, 'i'); } catch { continue; } if (re.test(t)) return true; } return false; }\nconst content = src.message.content || '';\nconst optOut = src.message.opted_out ? { optOut: true, matched: 'sendblue_opted_out_flag' } : detectOptOut(content, OPT_OUT_RULES);\nconst wrongNumber = detectPatterns(content, WRONG_RULES.patterns);\nconst sensitiveHits = Object.entries(SENSITIVE).filter(([, p]) => { try { return new RegExp(p, 'i').test(content); } catch { return false; } }).map(([k]) => k);\n// TEST-MODE ALLOWLIST GATE: while test_mode=true, only allowlisted numbers are processed at all.\n// Non-allowlisted senders are silently suppressed BEFORE any typing indicator, Claude call, or Salesforce write.\nconst testMode = cfg.test_mode !== 'false';\nconst testAllowlist = String(cfg.test_allowlist_numbers || '').split(',').map(s => s.trim()).filter(Boolean);\nconst allowlisted = testAllowlist.includes(src.customer_number);\nlet route = 'process';\nif (testMode && !allowlisted) route = 'kill_switch_off';\nelse if (optOut.optOut) route = 'opt_out'; else if (wrongNumber) route = 'wrong_number'; else if (!globalOn) route = 'kill_switch_off';\nreturn [{ json: { ...src, config: cfg, global_ai_enabled: globalOn, route, opt_out_matched: optOut.matched ?? null, sensitive_types: sensitiveHits, contains_sensitive: sensitiveHits.length > 0 } }];"
       }
     },
     {
@@ -385,32 +374,22 @@
     {
       "id": "sb01-lock",
       "name": "Acquire Contact Lock",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
       "position": [
         2080,
         140
       ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "operation": "insert",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "__MAP_AFTER_IMPORT__",
-          "cachedResultName": "contact_locks"
-        },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "normalized_phone_hash": "={{ $json.customer_ref }}",
-            "correlation_id": "={{ $json.correlation_id }}",
-            "locked_at": "={{ $now.toISO() }}",
-            "expires_at": "={{ $now.plus({ minutes: 3 }).toISO() }}"
-          }
-        },
-        "options": {
-          "$comment": "normalized_phone_hash UNIQUE => concurrent message for same contact fails insert and is debounced into the running conversation (SB-04 re-reads recent messages)."
+        "operation": "executeQuery",
+        "query": "-- Atomic lock claim. Expired locks are cleared first so a crashed run cannot\n-- block a contact forever; the insert then either wins or violates the primary\n-- key, and a violation routes to the debounce branch.\nDELETE FROM contact_locks WHERE expires_at < now();\nINSERT INTO contact_locks (normalized_phone_hash, correlation_id, locked_at, expires_at)\nVALUES ('{{ $json.customer_ref }}', '{{ $json.correlation_id }}', now(), now() + interval '3 minutes');",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "__MAP_AFTER_IMPORT__",
+          "name": "Emma Postgres [placeholder]"
         }
       }
     },
@@ -476,32 +455,25 @@
     {
       "id": "sb01-unlock",
       "name": "Release Contact Lock",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
       "position": [
         2740,
         140
       ],
       "onError": "continueErrorOutput",
       "parameters": {
-        "operation": "deleteRows",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "list",
-          "value": "__MAP_AFTER_IMPORT__",
-          "cachedResultName": "contact_locks"
-        },
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "normalized_phone_hash",
-              "condition": "eq",
-              "keyValue": "={{ $('Deterministic Pre-Model Gate').first().json.customer_ref }}"
-            }
-          ]
-        }
+        "operation": "executeQuery",
+        "query": "DELETE FROM contact_locks\nWHERE normalized_phone_hash = '{{ $('Deterministic Pre-Model Gate').first().json.customer_ref }}';",
+        "options": {}
       },
-      "alwaysOutputData": true
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "__MAP_AFTER_IMPORT__",
+          "name": "Emma Postgres [placeholder]"
+        }
+      }
     },
     {
       "id": "sb01-debounce-log",

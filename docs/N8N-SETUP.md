@@ -160,6 +160,7 @@ inside workflow JSON). They mirror the repo's `.env.example`:
 | `FOLLOWUP_MAX_ATTEMPTS` | Follow-up cap | `3` |
 | `APPLICATION_LINK_BASE_URL` | The only URL allowed in outbound text | placeholder |
 | `SF_PLACEHOLDER_VALUES` | Values scrubbed to null in the prefill payload | `Unknown,Other - Other,Other,N/A,None,TBD` |
+| `SENDBLUE_ALLOWED_LINES` | Lines Emma answers on; all other traffic is dropped | empty |
 | `RESET_CONTROL_ENABLED` | Honour the `RESET` control word (testing only) | `false` |
 | `RESET_CONTROL_NUMBERS` | Comma-separated numbers allowed to send `RESET` | empty |
 
