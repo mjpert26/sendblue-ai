@@ -61,17 +61,18 @@ Each fact in the system has exactly one authoritative home:
    only meaningful to the workflows themselves. The 9 tables are defined in
    [`../data-tables/definitions.json`](../data-tables/definitions.json).
 
-Because those three stores cover every datum, an external database would add
-an operational dependency (hosting, backups, credentials, another PII
-surface) without adding a single capability. This is a deliberate design
-decision recorded as ASSUMPTIONS.md A-20.
+Those three stores cover every business datum. The one addition, recorded as
+ASSUMPTIONS.md A-20, is Postgres on Supabase for **concurrency-critical
+technical state**: inbound dedupe (`processed_messages`), per-contact locks
+(`contact_locks`), the outbound send claim (`outbound_idempotency`) and funnel
+telemetry (`conversation_events`). A Data Table read-then-write is not atomic,
+and a race on the send claim can double-text a customer; a primary-key INSERT
+cannot. Schema: [`../db/schema.sql`](../db/schema.sql). Everything else
+technical stays in Data Tables.
 
-**Revisit condition:** if outbound volume grows past what per-item Data Table
-reads/writes comfortably support (e.g., idempotency checks or rate-limit
-counters become a measurable bottleneck, or retention/analytics needs exceed
-what Data Tables offer), revisit this decision — the likely first step is
-moving only the *technical* tables to a managed store, never the transcripts
-or CRM data.
+**Revisit condition:** if a remaining Data Table (`agent_config`,
+`followup_jobs`, `dead_letter_events`, `retry_state`) becomes contended, move it
+to the same Postgres database using the pattern in SB-06.
 
 ## 3. Workflow topology
 
@@ -98,6 +99,7 @@ flowchart TB
         SB10[SB-10 Error Handler / DLQ]
         SB11[SB-11 Test Harness<br/>mocks only]
         DT[(n8n Data Tables<br/>technical state)]
+        PG[(Postgres / Supabase<br/>atomic claims + telemetry)]
     end
     CUST <--> SB
     SB -- receive webhook --> SB01
@@ -121,6 +123,7 @@ flowchart TB
     SB08 <--> SF
     SB09 <--> SF
     SB01 & SB06 & SB07 & SB08 & SB10 & SB11 <--> DT
+    SB01 & SB06 <--> PG
     SB10 --> SLK
     SB07 --> SLK
     SB00 -.reads.-> SF & SB & DT
@@ -135,6 +138,7 @@ sequenceDiagram
     participant S as Sendblue
     participant W1 as SB-01 Router
     participant DT as Data Tables
+    participant PG as Postgres
     participant R as SB-03 Resolver
     participant O as SB-04 Orchestrator
     participant A as Claude
@@ -145,13 +149,13 @@ sequenceDiagram
     S->>W1: POST webhook (secret header, A-03)
     W1-->>S: 200 immediately
     W1->>W1: Validate secret, normalize E.164,<br/>assign correlation_id
-    W1->>DT: processed_messages: message_handle seen?
+    W1->>PG: processed_messages: atomic claim (primary key)<br/>+ inbound_received event
     alt duplicate
         W1->>W1: Stop (idempotent no-op)
     end
     W1->>W1: Deterministic opt-out / wrong-number regex<br/>(BEFORE any model call)
     W1->>DT: agent_config: global_ai_enabled?
-    W1->>DT: contact_locks: acquire per-contact lock
+    W1->>PG: contact_locks: atomic per-contact lock
     W1->>R: resolve(normalized phone)
     R->>SF: Match Lead.MobilePhone → Lead.Phone →<br/>Contact.MobilePhone → Contact.Phone →<br/>person account → custom fields
     R-->>W1: record + verification level (0/1/2)<br/>sanitized context object
@@ -166,10 +170,11 @@ sequenceDiagram
     O->>SF: Allowed field updates only<br/>(field map + fill_empty_only)
     O->>D: dispatch(reply, idempotency key)
     D->>D: 15+ pre-send guards<br/>(kill switch, opt-out, takeover, consent,<br/>hours, rate limit, TEST_MODE allowlist, …)
-    D->>DT: outbound_idempotency: key new?
+    D->>PG: outbound_idempotency: atomic send claim (primary key)
     D->>S: POST /send-message (+ seat_id when configured, A-05)
     S->>C: Reply delivered
-    O->>DT: Release contact lock
+    D->>PG: record outcome + reply_sent / link_sent event
+    W1->>PG: Release contact lock
 ```
 
 ## 4. Data residency
@@ -177,7 +182,7 @@ sequenceDiagram
 | Data | Lives in | Never in | Retention |
 |------|----------|----------|-----------|
 | Message bodies / transcripts / media | Sendblue | Data Tables, logs, Slack alerts | Sendblue policy |
-| Delivery statuses per message | Sendblue → mirrored technically in `outbound_idempotency` (status only, no content) | — | 30 days (table) |
+| Delivery statuses per message | Sendblue → mirrored technically in `outbound_idempotency` (Postgres; status only, no content) | — | 30 days |
 | Identity, qualification answers, stage, consent, opt-out, takeover | Salesforce | Data Tables | Salesforce policy |
 | Conversation summary for humans | Salesforce (`ai_conversation_summary` mapping) | — | Salesforce policy |
 | Idempotency keys, locks, retry counters | n8n Data Tables | — | 1–30 days |
@@ -213,8 +218,8 @@ before is dropped before any processing. Outcome (`processed`, `duplicate`,
 
 **Outbound:** every candidate send carries an idempotency key computed as
 `correlation_id + recipient + content-hash`. SB-06 inserts it into
-`outbound_idempotency` (unique column) before calling Sendblue; a key that
-already exists is never sent again. This makes retries, SB-10 replays, and
+`outbound_idempotency` (Postgres primary key, one atomic INSERT) before calling
+Sendblue; a key that already exists violates the key and is never sent again. This makes retries, SB-10 replays, and
 double-triggering safe: identical content to the same recipient within the
 same correlation can only leave once. SB-07 later updates the row's
 `delivery_status` by `message_handle` — also idempotently — and SB-10 **never

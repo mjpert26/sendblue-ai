@@ -71,9 +71,9 @@ and mark the unique column where specified.
 | Table | Unique column | Columns |
 |-------|---------------|---------|
 | `agent_config` | `key` | `key` (string), `value` (string), `updated_by` (string), `updated_at` (date) |
-| `processed_messages` | `message_handle` | `message_handle`, `correlation_id`, `normalized_phone_hash` (string), `processed_at` (date), `outcome` (string) |
-| `outbound_idempotency` | `idempotency_key` | `idempotency_key`, `correlation_id`, `message_handle`, `delivery_status` (string), `accepted_by_sendblue` (boolean), `created_at`, `updated_at` (date), `failure_count` (number) |
-| `contact_locks` | `normalized_phone_hash` | `normalized_phone_hash`, `correlation_id` (string), `locked_at`, `expires_at` (date) |
+| `processed_messages` | `message_handle` | `message_handle`, `correlation_id`, `normalized_phone_hash` (string), `processed_at` (date), `outcome` (string) | **Live SB-01 uses the Postgres table instead** (§3b). |
+| `outbound_idempotency` | — | **Moved to Postgres** (§3b). Not read or written by SB-06 any more; create it only if you still run SB-07/SB-10 against Data Tables. |
+| `contact_locks` | `normalized_phone_hash` | `normalized_phone_hash`, `correlation_id` (string), `locked_at`, `expires_at` (date) | **Live SB-01 uses the Postgres table instead** (§3b). |
 | `retry_state` | `retry_key` | `retry_key`, `category` (string), `attempts` (number), `next_attempt_at` (date), `last_error_code` (string) |
 | `dead_letter_events` | `event_id` | `event_id`, `correlation_id`, `workflow_name`, `category`, `error_code`, `sanitized_summary`, `message_handle`, `salesforce_record_ref` (string), `replayable` (boolean), `replayed_at`, `created_at` (date) |
 | `approved_faq` | `faq_id` | `faq_id`, `intent`, `question`, `answer` (string), `required_verification_level`, `review_version` (number), `active`, `approved` (boolean) |
@@ -86,6 +86,28 @@ Then seed `agent_config` from `data-tables/seed-data.example.json`
 
 These tables hold **technical state only** — never CRM data, transcripts, or
 raw phone numbers (phones are stored hashed).
+
+## 3b. Postgres (Supabase) for concurrency-critical state
+
+The send claim, inbound dedupe, contact locks and funnel telemetry live in
+Postgres, not Data Tables, because a primary-key INSERT is atomic and a Data
+Table read-then-write is not (ASSUMPTIONS.md A-20).
+
+1. Create the tables, indexes and views from
+   [`../db/schema.sql`](../db/schema.sql) (Supabase SQL editor or `psql`).
+2. Add an n8n **Postgres** credential named `Sendblue-AI`: host = the
+   Supabase **Session pooler** host, port `5432`, user `postgres.<project ref>`,
+   SSL on. The direct connection is IPv6-only and will refuse from most n8n
+   hosts.
+3. Attach that credential to the three Postgres nodes in SB-06
+   (`Count Recent Outbound (Rate Limit)`, `Claim Idempotency Key`,
+   `Record Send Outcome`). All three use **Execute Query** with bound query
+   parameters; nothing is interpolated into SQL.
+4. Verify with one test-mode send: `outbound_idempotency` gains a row whose
+   `delivery_status` is `MOCKED` (or the Sendblue status when the recipient is
+   allowlisted), and `conversation_events` gains a `reply_sent` or `link_sent`
+   row with a non-null `latency_ms`. Dispatch the same payload twice and the
+   second run must exit through `Log Duplicate Send Attempt`.
 
 ## 4. Importing the 12 workflow JSONs
 

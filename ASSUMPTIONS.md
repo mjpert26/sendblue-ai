@@ -146,9 +146,16 @@ via web search excerpts of the official docs and the organization's live
 Sendblue/Salesforce MCP tooling. Items that could not be grounded are marked
 Assumed with safe fallbacks.
 
-## A-20 — No external database (By design)
-All persistence is Sendblue (message history), Salesforce (business state) and
-n8n Data Tables (technical state only: idempotency, locks, retries,
-dead-letter, config, FAQ cache, follow-up jobs, test results). No requirement
-was found that these cannot handle at this scale; if outbound volume grows
-past what per-item Data Table reads support, revisit (docs/ARCHITECTURE.md).
+## A-20 — Persistence split: Data Tables vs Postgres (Revised)
+Sendblue holds message history and Salesforce holds business state. Technical
+state is split: operator-editable configuration (`agent_config`) and the
+low-contention tables stay in n8n Data Tables, while concurrency-critical
+state — inbound dedupe (`processed_messages`), per-contact locks
+(`contact_locks`), the outbound send claim (`outbound_idempotency`) and funnel
+telemetry (`conversation_events`) — lives in Postgres on Supabase
+(`db/schema.sql`). Reason: a Data Table read-then-write is not atomic, and a
+race on the send claim can double-text a customer; a primary-key INSERT cannot.
+n8n reaches Postgres through the Supabase Session pooler (port 5432, SSL); the
+direct connection is IPv6-only. The n8n Postgres node's "Query Parameters"
+option is used for every value that originates outside the workflow (Sendblue
+response fields) so nothing is string-interpolated into SQL.

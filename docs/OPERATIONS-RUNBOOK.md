@@ -24,8 +24,9 @@ compliance sign-off items
 
 1. Run **SB-00** and file/fix any YELLOW items.
 2. Review `retry_state` for keys stuck near max attempts.
-3. Review outbound volume vs rate limits; revisit A-20 if Data Table
-   operations are becoming a bottleneck ([`ARCHITECTURE.md`](ARCHITECTURE.md) §2).
+3. Review outbound volume vs rate limits. The send claim and dedupe already run
+   in Postgres (A-20); if a remaining Data Table becomes contended, move it the
+   same way ([`ARCHITECTURE.md`](ARCHITECTURE.md) §2).
 4. Re-run `npm run inspect:salesforce` if admins changed schema; diff the
    generated map; update the local field map + status map if needed.
 5. Verify Data Table retention is actually pruning (`processed_messages` ≤30
